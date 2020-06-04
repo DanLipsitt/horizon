@@ -1,7 +1,6 @@
 #include "canvas/canvas.hpp"
 #include "common/common.hpp"
 #include "common/lut.hpp"
-#include "core/core.hpp"
 #include "imp.hpp"
 #include "imp_board.hpp"
 #include "imp_package.hpp"
@@ -109,11 +108,12 @@ int main(int argc, char *argv[])
 
     std::unique_ptr<horizon::ImpBase> imp = nullptr;
     if (mode_sch) {
-        if (filenames.size() < 2) {
+        if (filenames.size() < 3) {
             std::cout << "wrong arguments number" << std::endl;
             return 1;
         }
-        imp.reset(new horizon::ImpSchematic(filenames.at(0), filenames.at(1), {pool_base_path, pool_cache_path}));
+        imp.reset(new horizon::ImpSchematic(filenames.at(0), filenames.at(1), filenames.at(2),
+                                            {pool_base_path, pool_cache_path}));
     }
     else if (mode_symbol) {
         imp.reset(new horizon::ImpSymbol(filenames.at(0), pool_base_path));
@@ -125,7 +125,7 @@ int main(int argc, char *argv[])
         imp.reset(new horizon::ImpPackage(filenames.at(0), pool_base_path));
     }
     else if (mode_board) {
-        imp.reset(new horizon::ImpBoard(filenames.at(0), filenames.at(1), filenames.at(2),
+        imp.reset(new horizon::ImpBoard(filenames.at(0), filenames.at(1), filenames.at(2), filenames.at(3),
                                         {pool_base_path, pool_cache_path}));
     }
     else if (mode_frame) {

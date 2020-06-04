@@ -62,6 +62,23 @@ Color color_from_json(const json &j);
 json color_to_json(const Color &c);
 
 std::string format_m_of_n(unsigned int m, unsigned int n);
+std::string format_digits(unsigned int m, unsigned int digits_max);
 double parse_si(const std::string &inps);
+
+void rmdir_recursive(const std::string &dir_name);
+std::string replace_placeholders(const std::string &s, std::function<std::string(const std::string &)> fn,
+                                 bool keep_empty);
+
+Coordi dir_from_arrow_key(unsigned int key);
+
+template <typename T> std::pair<Coord<T>, Coord<T>> pad_bbox(std::pair<Coord<T>, Coord<T>> bb, T pad)
+{
+    bb.first.x -= pad;
+    bb.first.y -= pad;
+
+    bb.second.x += pad;
+    bb.second.y += pad;
+    return bb;
+}
 
 } // namespace horizon

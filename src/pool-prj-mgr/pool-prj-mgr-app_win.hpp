@@ -17,6 +17,7 @@
 #include "prj-mgr/prj-mgr_views.hpp"
 #include "pool-mgr/view_create_pool.hpp"
 #include "common/common.hpp"
+#include <git2.h>
 
 namespace horizon {
 using json = nlohmann::json;
@@ -55,6 +56,13 @@ public:
     {
         return s_signal_process_exited;
     }
+
+    typedef sigc::signal<void, std::string> type_signal_process_saved;
+    type_signal_process_saved signal_process_saved()
+    {
+        return s_signal_process_saved;
+    }
+
     void reload();
 
     class ClosePolicy {
@@ -77,6 +85,8 @@ public:
     UUID get_pool_uuid() const;
     void pool_notebook_go_to(ObjectType type, const UUID &uu);
     void open_pool(const std::string &pool_json, ObjectType type = ObjectType::INVALID, const UUID &uu = UUID());
+    void handle_download(bool back_to_start = false);
+    void update_pool_cache_status_now();
 
 private:
     Glib::RefPtr<Gtk::Builder> builder;
@@ -112,12 +122,18 @@ private:
     Gtk::Revealer *pool_update_status_rev = nullptr;
     Gtk::Button *pool_update_status_close_button = nullptr;
     Gtk::ProgressBar *pool_update_progress = nullptr;
+    sigc::connection pool_update_conn;
 
     Gtk::InfoBar *info_bar = nullptr;
     Gtk::Label *info_bar_label = nullptr;
+    Gtk::Button *show_output_button = nullptr;
+
+    Gtk::InfoBar *info_bar_pool_not_added = nullptr;
 
     Gtk::MenuItem *menu_new_pool = nullptr;
     Gtk::MenuItem *menu_new_project = nullptr;
+
+    class OutputWindow *output_window = nullptr;
 
     std::unique_ptr<Project> project = nullptr;
     std::string project_filename;
@@ -125,6 +141,8 @@ private:
     void save_project();
     class PartBrowserWindow *part_browser_window = nullptr;
     class PoolCacheWindow *pool_cache_window = nullptr;
+    std::unique_ptr<class PoolCacheMonitor> pool_cache_monitor;
+    void cleanup();
 
     ViewMode view_mode = ViewMode::OPEN;
     void set_view_mode(ViewMode mode);
@@ -135,7 +153,6 @@ private:
     void handle_close();
     void handle_recent();
     void handle_update();
-    void handle_download();
     void handle_do_download();
     void handle_new_project();
     void handle_new_pool();
@@ -162,6 +179,7 @@ private:
     const UUID uuid_project_manager = "144a4ad6-4c7c-4136-9920-f58f954c678e";
 
     type_signal_process_exited s_signal_process_exited;
+    type_signal_process_saved s_signal_process_saved;
 
     PoolProjectManagerViewCreateProject view_create_project;
     PoolProjectManagerViewProject view_project;
@@ -170,11 +188,20 @@ private:
     void handle_place_part(const UUID &uu);
     void handle_assign_part(const UUID &uu);
 
+    PoolProjectManagerApplication *app;
     zmq::socket_t sock_mgr;
     std::string sock_mgr_ep;
 
     bool check_pools();
     bool check_schema_update(const std::string &base_path);
+
+    bool download_back_to_start = false;
+
+    bool check_autosave(PoolProjectManagerProcess::Type type, const std::vector<std::string> &filenames);
+
+    static int git_transfer_cb(const git_transfer_progress *stats, void *payload);
+    bool downloading = false;
+    bool download_cancel = false;
 
 public:
     zmq::context_t &zctx;

@@ -3,6 +3,7 @@
 #include "util/util.hpp"
 #include "nlohmann/json.hpp"
 #include "board/board_layers.hpp"
+#include "util/picture_load.hpp"
 
 namespace horizon {
 
@@ -119,6 +120,13 @@ Package::Package(const UUID &uu, const json &j, Pool &pool)
                                std::forward_as_tuple(u, it.value()));
         }
     }
+    if (j.count("pictures")) {
+        const json &o = j["pictures"];
+        for (auto it = o.cbegin(); it != o.cend(); ++it) {
+            auto u = UUID(it.key());
+            pictures.emplace(std::piecewise_construct, std::forward_as_tuple(u), std::forward_as_tuple(u, it.value()));
+        }
+    }
     for (auto &it : keepouts) {
         it.second.polygon.update(polygons);
         it.second.polygon->usage = &it.second;
@@ -155,7 +163,7 @@ Package::Package(const UUID &uu, const json &j, Pool &pool)
 Package Package::new_from_file(const std::string &filename, Pool &pool)
 {
     auto j = load_json_from_file(filename);
-    return Package(UUID(j["uuid"].get<std::string>()), j, pool);
+    return Package(UUID(j.at("uuid").get<std::string>()), j, pool);
 }
 
 Package::Package(const UUID &uu) : uuid(uu), parameter_program(this, "")
@@ -175,7 +183,7 @@ Polygon *Package::get_polygon(const UUID &uu)
 Package::Package(const Package &pkg)
     : uuid(pkg.uuid), name(pkg.name), manufacturer(pkg.manufacturer), tags(pkg.tags), junctions(pkg.junctions),
       lines(pkg.lines), arcs(pkg.arcs), texts(pkg.texts), pads(pkg.pads), polygons(pkg.polygons),
-      keepouts(pkg.keepouts), dimensions(pkg.dimensions), parameter_set(pkg.parameter_set),
+      keepouts(pkg.keepouts), dimensions(pkg.dimensions), pictures(pkg.pictures), parameter_set(pkg.parameter_set),
       parameter_program(pkg.parameter_program), models(pkg.models), default_model(pkg.default_model),
       alternate_for(pkg.alternate_for), warnings(pkg.warnings)
 {
@@ -196,6 +204,7 @@ void Package::operator=(Package const &pkg)
     polygons = pkg.polygons;
     keepouts = pkg.keepouts;
     dimensions = pkg.dimensions;
+    pictures = pkg.pictures;
     parameter_set = pkg.parameter_set;
     parameter_program = pkg.parameter_program;
     models = pkg.models;
@@ -275,7 +284,6 @@ void Package::expand()
 {
     map_erase_if(keepouts, [this](auto &it) { return polygons.count(it.second.polygon.uuid) == 0; });
     for (auto &it : junctions) {
-        it.second.temp = false;
         it.second.layer = 10000;
         it.second.has_via = false;
         it.second.needs_via = false;
@@ -294,12 +302,15 @@ void Package::expand()
     for (const auto &it : arcs) {
         it.second.from->connection_count++;
         it.second.to->connection_count++;
+        it.second.center->connection_count++;
         for (auto &ju : {it.second.from, it.second.to}) {
             if (ju->layer == 10000) { // none assigned
                 ju->layer = it.second.layer;
             }
         }
     }
+
+    map_erase_if(junctions, [](const auto &it) { return it.second.connection_count == 0; });
 }
 
 void Package::update_warnings()
@@ -348,6 +359,7 @@ const std::map<int, Layer> &Package::get_layers() const
             pkg_layers.emplace(std::piecewise_construct, std::forward_as_tuple(n),
                                std::forward_as_tuple(n, BoardLayers::get_layer_name(n), r, c));
         };
+        add_layer(BoardLayers::L_OUTLINE);
         add_layer(BoardLayers::TOP_COURTYARD);
         add_layer(BoardLayers::TOP_ASSEMBLY);
         add_layer(BoardLayers::TOP_PACKAGE);
@@ -416,6 +428,12 @@ json Package::serialize() const
     for (const auto &it : dimensions) {
         j["dimensions"][(std::string)it.first] = it.second.serialize();
     }
+    if (pictures.size()) {
+        j["pictures"] = json::object();
+        for (const auto &it : pictures) {
+            j["pictures"][(std::string)it.first] = it.second.serialize();
+        }
+    }
     return j;
 }
 
@@ -455,4 +473,15 @@ int Package::get_max_pad_name() const
     }
     return -1;
 }
+
+void Package::save_pictures(const std::string &dir) const
+{
+    pictures_save({&pictures}, dir, "pkg");
+}
+
+void Package::load_pictures(const std::string &dir)
+{
+    pictures_load({&pictures}, dir, "pkg");
+}
+
 } // namespace horizon

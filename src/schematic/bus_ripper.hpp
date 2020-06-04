@@ -21,10 +21,10 @@ using json = nlohmann::json;
 class BusRipper : public UUIDProvider {
 public:
     BusRipper(const UUID &uu, const json &j, class Sheet &sheet, class Block &block);
+    BusRipper(const UUID &uu, const json &j);
     BusRipper(const UUID &uu);
     virtual UUID get_uuid() const;
     UUID uuid;
-    bool temp = false;
 
     uuid_ptr<Junction> junction;
     Orientation orientation = Orientation::UP;

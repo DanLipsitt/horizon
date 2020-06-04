@@ -45,6 +45,7 @@ private:
     std::map<ObjectType, class PoolBrowser *> browsers;
     std::map<std::string, class PoolBrowserParametric *> browsers_parametric;
     class PartWizard *part_wizard = nullptr;
+    class KiCadSymbolImportWizard *kicad_symbol_import_wizard = nullptr;
     class DuplicateWindow *duplicate_window = nullptr;
     bool closing = false;
 
@@ -55,6 +56,7 @@ private:
     std::deque<std::tuple<PoolUpdateStatus, std::string, std::string>> pool_update_error_queue;
     bool pool_updating = false;
     void pool_updated(bool success);
+    void reload();
     std::string pool_update_last_file;
     unsigned int pool_update_n_files = 0;
     unsigned int pool_update_n_files_last = 0;
@@ -92,7 +94,8 @@ private:
     void handle_create_package();
     void handle_create_padstack_for_package(const UUID &uu);
     void handle_duplicate_package(const UUID &uu);
-    void handle_part_wizard(const UUID &uu);
+    void handle_part_wizard();
+    void handle_kicad_symbol_import_wizard();
 
     void construct_parts();
     void handle_edit_part(const UUID &uu);
@@ -113,6 +116,9 @@ private:
     void handle_delete(ObjectType ty, const UUID &uu);
     void handle_copy_path(ObjectType ty, const UUID &uu);
     void add_context_menu(class PoolBrowser *br);
+
+    void install_search_once(Gtk::Widget *page, PoolBrowser *browser);
+    bool widget_is_visible(Gtk::Widget *widget);
 
     std::string remote_repo;
     class PoolRemoteBox *remote_box = nullptr;

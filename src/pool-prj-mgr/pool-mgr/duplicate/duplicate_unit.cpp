@@ -55,7 +55,7 @@ public:
         name_entry->set_hexpand(true);
         grid_attach_label_and_widget(grid, "Name", name_entry, top);
 
-        location_entry = Gtk::manage(new LocationEntry);
+        location_entry = Gtk::manage(new LocationEntry(pool->get_base_path()));
         location_entry->set_filename(
                 DuplicateUnitWidget::insert_filename(pool->get_filename(ObjectType::SYMBOL, sym->uuid), "-copy"));
         grid_attach_label_and_widget(grid, "Filename", location_entry, top);
@@ -147,7 +147,7 @@ DuplicateUnitWidget::DuplicateUnitWidget(Pool *p, const UUID &unit_uuid, bool op
     name_entry->set_hexpand(true);
     grid_attach_label_and_widget(grid, "Name", name_entry, top);
 
-    location_entry = Gtk::manage(new LocationEntry);
+    location_entry = Gtk::manage(new LocationEntry(pool->get_base_path()));
     location_entry->set_filename(insert_filename(pool->get_filename(ObjectType::UNIT, unit->uuid), "-copy"));
     grid_attach_label_and_widget(grid, "Filename", location_entry, top);
 
@@ -179,7 +179,7 @@ UUID DuplicateUnitWidget::duplicate(std::vector<std::string> *filenames)
         for (auto ch : get_children()) {
             if (auto c = dynamic_cast<DuplicateSymbolWidget *>(ch)) {
                 auto symbol_filename = c->duplicate(new_unit.uuid);
-                if (filenames)
+                if (filenames && symbol_filename.size())
                     filenames->push_back(symbol_filename);
             }
         }

@@ -208,7 +208,7 @@ private:
 };
 
 PoolBrowserParametric::PoolBrowserParametric(Pool *p, PoolParametric *pp, const std::string &table_name)
-    : PoolBrowser(p), pool_parametric(pp), table(pp->get_tables().at(table_name)), list_columns(table)
+    : PoolBrowserStockinfo(p), pool_parametric(pp), table(pp->get_tables().at(table_name)), list_columns(table)
 {
     search_box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 10));
     search_box->property_margin() = 10;
@@ -222,6 +222,7 @@ PoolBrowserParametric::PoolBrowserParametric(Pool *p, PoolParametric *pp, const 
             search();
         });
         fbox->show();
+        fbox->set_no_show_all(true);
         filters_box->pack_start(*fbox, false, true, 0);
         filter_boxes.emplace(col.name, fbox);
         columns.emplace(col.name, col);
@@ -271,8 +272,9 @@ PoolBrowserParametric::PoolBrowserParametric(Pool *p, PoolParametric *pp, const 
     search_box->pack_start(*hbox, false, false, 0);
 
     construct(search_box);
-    search();
+    scrolled_window->set_policy(Gtk::POLICY_AUTOMATIC, Gtk::POLICY_AUTOMATIC);
     install_pool_item_source_tooltip();
+    update_filters();
 }
 
 Glib::RefPtr<Gtk::ListStore> PoolBrowserParametric::create_list_store()
@@ -283,16 +285,24 @@ Glib::RefPtr<Gtk::ListStore> PoolBrowserParametric::create_list_store()
 
 void PoolBrowserParametric::create_columns()
 {
-    append_column_with_item_source_cr("MPN", list_columns.MPN);
-    append_column("Manufacturer", list_columns.manufacturer);
-    append_column("Package", list_columns.package);
-    for (const auto &col : table.columns) {
-        auto tvc = create_tvc(col, list_columns.params.at(col.name));
-        treeview->append_column(*tvc);
+    {
+        auto col = append_column_with_item_source_cr("MPN", list_columns.MPN, Pango::ELLIPSIZE_END);
+        col->set_resizable(true);
+        col->set_expand(true);
+        col->set_min_width(100);
     }
     {
-        auto cr = Gtk::manage(new Gtk::CellRendererText());
-        auto tvc = Gtk::manage(new Gtk::TreeViewColumn("", *cr));
+        auto col = append_column("Manufacturer", list_columns.manufacturer, Pango::ELLIPSIZE_END);
+        col->set_resizable(true);
+        col->set_min_width(100);
+    }
+    {
+        auto col = append_column("Package", list_columns.package, Pango::ELLIPSIZE_END);
+        col->set_resizable(true);
+        col->set_min_width(100);
+    }
+    for (const auto &col : table.columns) {
+        auto tvc = create_tvc(col, list_columns.params.at(col.name));
         treeview->append_column(*tvc);
     }
 }
@@ -339,11 +349,9 @@ void PoolBrowserParametric::apply_filters()
 
 void PoolBrowserParametric::search()
 {
-    auto selected_uuid = get_selected();
-    treeview->unset_model();
-    store->clear();
+    prepare_search();
     values_remaining.clear();
-
+    iter_cache.clear();
 
     std::set<std::string> manufacturers;
     if (filters_applied.count("_manufacturer"))
@@ -351,13 +359,25 @@ void PoolBrowserParametric::search()
     std::set<std::string> packages;
     if (filters_applied.count("_package"))
         packages = filters_applied.at("_package");
-    std::string qs =
-            "SELECT p.*, parts.MPN, parts.manufacturer, packages.name, parts.filename, parts.pool_uuid, "
-            "parts.overridden "
-            "FROM "
-            + table.name
-            + " AS p LEFT JOIN pool.parts USING (uuid) LEFT JOIN pool.packages ON parts.package = packages.uuid "
-            + "WHERE 1 ";
+    std::string qs;
+    if (similar_part_uuid) {
+        qs += "WITH RECURSIVE all_bases(uuidx) AS (SELECT $similar_part UNION "
+              "SELECT parts.base FROM parts INNER JOIN all_bases ON parts.uuid = uuidx "
+              "WHERE parts.base != '00000000-0000-0000-0000-000000000000'), "
+              "all_derived(uuidy) AS (SELECT * FROM all_bases UNION "
+              "SELECT parts.uuid FROM parts INNER JOIN all_derived ON parts.base = uuidy), "
+              "real_bases(uuidz) AS (SELECT DISTINCT parts.base FROM parts INNER JOIN all_derived ON "
+              "all_derived.uuidy = parts.base) ";
+    }
+    qs += "SELECT p.*, parts.MPN, parts.manufacturer, packages.name, parts.filename, parts.pool_uuid, "
+          "parts.overridden "
+          "FROM "
+          + table.name
+          + " AS p LEFT JOIN pool.parts USING (uuid) LEFT JOIN pool.packages ON parts.package = packages.uuid ";
+    if (similar_part_uuid) {
+        qs += "INNER JOIN real_bases ON real_bases.uuidz = parts.base ";
+    }
+    qs += "WHERE 1 ";
     if (manufacturers.size()) {
         qs += " AND parts.manufacturer IN " + get_in("_manufacturer", manufacturers.size());
     }
@@ -376,39 +396,57 @@ void PoolBrowserParametric::search()
     SQLite::Query q(pool_parametric->db, qs);
     bind_set(q, "_manufacturer", manufacturers);
     bind_set(q, "_package", packages);
+    if (similar_part_uuid) {
+        q.bind("$similar_part", similar_part_uuid);
+    }
     for (const auto &it : filters_applied) {
         if (it.first.at(0) != '_') {
             bind_set(q, it.first, it.second);
         }
     }
-    Gtk::TreeModel::Row row;
-    while (q.step()) {
-        UUID uu(q.get<std::string>(0));
-        row = *(store->append());
-        row[list_columns.uuid] = q.get<std::string>(0);
-        for (size_t i = 0; i < table.columns.size(); i++) {
-            auto &col = table.columns.at(i);
-            std::string v = q.get<std::string>(1 + i);
-            row[list_columns.params.at(col.name)] = col.format(v);
-            values_remaining[col.name].emplace(v);
+    std::list<UUID> uuids;
+    try {
+        Gtk::TreeModel::Row row;
+        while (q.step()) {
+            UUID uu(q.get<std::string>(0));
+            uuids.push_back(uu);
+            auto iter = store->append();
+            row = *(iter);
+            row[list_columns.uuid] = uu;
+            iter_cache.emplace(uu, iter);
+            for (size_t i = 0; i < table.columns.size(); i++) {
+                auto &col = table.columns.at(i);
+                std::string v = q.get<std::string>(1 + i);
+                row[list_columns.params.at(col.name)] = col.format(v);
+                values_remaining[col.name].emplace(v);
+            }
+            size_t ofs = table.columns.size() + 1;
+            row[list_columns.MPN] = q.get<std::string>(ofs + 0);
+            std::string manufacturer = q.get<std::string>(ofs + 1);
+            std::string package = q.get<std::string>(ofs + 2);
+            row[list_columns.path] = q.get<std::string>(ofs + 3);
+            row[list_columns.source] = pool_item_source_from_db(q.get<std::string>(ofs + 4), q.get<int>(ofs + 5));
+            row[list_columns.manufacturer] = manufacturer;
+            row[list_columns.package] = package;
+            values_remaining["_manufacturer"].emplace(manufacturer);
+            values_remaining["_package"].emplace(package);
         }
-        size_t ofs = table.columns.size() + 1;
-        row[list_columns.MPN] = q.get<std::string>(ofs + 0);
-        std::string manufacturer = q.get<std::string>(ofs + 1);
-        std::string package = q.get<std::string>(ofs + 2);
-        row[list_columns.path] = q.get<std::string>(ofs + 3);
-        row[list_columns.source] = pool_item_source_from_db(q.get<std::string>(ofs + 4), q.get<int>(ofs + 5));
-        row[list_columns.manufacturer] = manufacturer;
-        row[list_columns.package] = package;
-        values_remaining["_manufacturer"].emplace(manufacturer);
-        values_remaining["_package"].emplace(package);
+        set_busy(false);
+    }
+    catch (SQLite::Error &e) {
+        if (e.rc == SQLITE_BUSY) {
+            set_busy(true);
+        }
+        else {
+            throw;
+        }
     }
 
-    treeview->set_model(store);
-    select_uuid(selected_uuid);
-    scroll_to_selection();
+    finish_search();
     update_filters();
     update_filters_applied();
+    if (stock_info_provider)
+        stock_info_provider->update_parts(uuids);
 }
 
 void PoolBrowserParametric::update_filters()
@@ -499,6 +537,46 @@ void PoolBrowserParametric::add_copy_name_context_menu_item()
         auto clip = Gtk::Clipboard::get();
         clip->set_text(part->get_MPN());
     });
+}
+
+Gtk::TreeModelColumn<std::shared_ptr<StockInfoRecord>> &PoolBrowserParametric::get_stock_info_column()
+{
+    return list_columns.stock_info;
+}
+
+void PoolBrowserParametric::set_similar_part_uuid(const UUID &uu)
+{
+    similar_part_uuid = uu;
+}
+
+void PoolBrowserParametric::filter_similar(const UUID &uu, float tol)
+{
+    auto part = pool->get_part(uu);
+    if (part->parametric.count("table") == 0)
+        return;
+    if (part->parametric.at("table") != table.name)
+        return;
+    for (const auto &col : table.columns) {
+        if (part->parametric.count(col.name)) {
+            if (col.type == PoolParametric::Column::Type::QUANTITY) {
+                if (values_remaining.count(col.name)) {
+                    std::string x = part->parametric.at(col.name);
+                    auto target = string_to_double(x);
+                    auto lo = target * (1 - tol);
+                    auto hi = target * (1 + tol);
+                    filters_applied[col.name].clear();
+                    for (const auto &it : values_remaining.at(col.name)) {
+                        auto v = string_to_double(it);
+                        if (v >= lo && v <= hi)
+                            filters_applied[col.name].insert(it);
+                    }
+                }
+            }
+            else {
+                filters_applied[col.name] = {part->parametric.at(col.name)};
+            }
+        }
+    }
 }
 
 } // namespace horizon

@@ -28,8 +28,21 @@ public:
     Gtk::Button *search_next_button = nullptr;
     Gtk::Label *search_status_label = nullptr;
     Gtk::Revealer *search_revealer = nullptr;
+    Gtk::CheckButton *search_exact_cb = nullptr;
     Gtk::Expander *search_expander = nullptr;
     Gtk::Box *search_types_box = nullptr;
+    Gtk::Label *selection_mode_label = nullptr;
+    Gtk::MenuButton *view_options_button = nullptr;
+
+    Gtk::Revealer *action_bar_revealer = nullptr;
+    Gtk::Box *action_bar_box = nullptr;
+    void set_use_action_bar(bool u);
+
+    Glib::SignalProxy<bool, const Glib::ustring &> signal_activate_hud_link()
+    {
+        return hud_label->signal_activate_link();
+    }
+
 
     void tool_bar_set_visible(bool v);
     void tool_bar_set_tool_name(const std::string &s);
@@ -41,6 +54,8 @@ public:
 
     void show_nonmodal(const std::string &la, const std::string &button, std::function<void(void)> fn,
                        const std::string &la2 = "");
+
+    void set_view_hints_label(const std::vector<std::string> &s);
 
     // virtual ~MainWindow();
 private:
@@ -65,6 +80,8 @@ private:
     Gtk::Label *nonmodal_label = nullptr;
     Gtk::Label *nonmodal_label2 = nullptr;
     std::function<void(void)> nonmodal_fn;
+
+    Gtk::Label *view_hints_label = nullptr;
 
     void sc(void);
     void cm(const horizon::Coordi &cursor_pos);

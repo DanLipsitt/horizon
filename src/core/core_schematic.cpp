@@ -4,43 +4,48 @@
 #include "util/util.hpp"
 #include <algorithm>
 #include "nlohmann/json.hpp"
+#include <giomm/file.h>
+#include <glibmm/fileutils.h>
 
 namespace horizon {
-CoreSchematic::CoreSchematic(const std::string &schematic_filename, const std::string &block_filename, Pool &pool)
-    : block(Block::new_from_file(block_filename, pool)), sch(Schematic::new_from_file(schematic_filename, block, pool)),
-      rules(sch.rules), bom_export_settings(block.bom_export_settings), pdf_export_settings(sch.pdf_export_settings),
-      m_schematic_filename(schematic_filename), m_block_filename(block_filename)
+CoreSchematic::CoreSchematic(const std::string &schematic_filename, const std::string &block_filename,
+                             const std::string &pictures_dir, Pool &pool)
+    : block(Block::new_from_file(block_filename, pool)), project_meta_loaded_from_block(block.project_meta.size()),
+      sch(Schematic::new_from_file(schematic_filename, block, pool)), rules(sch.rules),
+      bom_export_settings(block.bom_export_settings), pdf_export_settings(sch.pdf_export_settings),
+      m_schematic_filename(schematic_filename), m_block_filename(block_filename), m_pictures_dir(pictures_dir)
 {
     auto x = std::find_if(sch.sheets.cbegin(), sch.sheets.cend(), [](const auto &a) { return a.second.index == 1; });
     assert(x != sch.sheets.cend());
     sheet_uuid = x->first;
     m_pool = &pool;
+    sch.load_pictures(m_pictures_dir);
     rebuild();
 }
 
-Junction *CoreSchematic::get_junction(const UUID &uu, bool work)
+Junction *CoreSchematic::get_junction(const UUID &uu)
 {
     auto &sheet = sch.sheets.at(sheet_uuid);
     return &sheet.junctions.at(uu);
 }
-SchematicSymbol *CoreSchematic::get_schematic_symbol(const UUID &uu, bool work)
+SchematicSymbol *CoreSchematic::get_schematic_symbol(const UUID &uu)
 {
     auto &sheet = sch.sheets.at(sheet_uuid);
     return &sheet.symbols.at(uu);
 }
-Text *CoreSchematic::get_text(const UUID &uu, bool work)
+Text *CoreSchematic::get_text(const UUID &uu)
 {
     auto &sheet = sch.sheets.at(sheet_uuid);
     return &sheet.texts.at(uu);
 }
-Schematic *CoreSchematic::get_schematic(bool work)
+Schematic *CoreSchematic::get_schematic()
 {
     return &sch;
 }
 
-Block *CoreSchematic::get_block(bool work)
+Block *CoreSchematic::get_block()
 {
-    return get_schematic(work)->block;
+    return get_schematic()->block;
 }
 
 LayerProvider *CoreSchematic::get_layer_provider()
@@ -48,51 +53,51 @@ LayerProvider *CoreSchematic::get_layer_provider()
     return get_sheet();
 }
 
-Sheet *CoreSchematic::get_sheet(bool work)
+Sheet *CoreSchematic::get_sheet()
 {
     return &sch.sheets.at(sheet_uuid);
 }
-Line *CoreSchematic::get_line(const UUID &uu, bool work)
+Line *CoreSchematic::get_line(const UUID &uu)
 {
     auto &sheet = sch.sheets.at(sheet_uuid);
     return &sheet.lines.at(uu);
 }
-Arc *CoreSchematic::get_arc(const UUID &uu, bool work)
+Arc *CoreSchematic::get_arc(const UUID &uu)
 {
     auto &sheet = sch.sheets.at(sheet_uuid);
     return &sheet.arcs.at(uu);
 }
 
-Junction *CoreSchematic::insert_junction(const UUID &uu, bool work)
+Junction *CoreSchematic::insert_junction(const UUID &uu)
 {
     auto &sheet = sch.sheets.at(sheet_uuid);
     auto x = sheet.junctions.emplace(std::make_pair(uu, uu));
     return &(x.first->second);
 }
 
-LineNet *CoreSchematic::insert_line_net(const UUID &uu, bool work)
+LineNet *CoreSchematic::insert_line_net(const UUID &uu)
 {
     auto &sheet = sch.sheets.at(sheet_uuid);
     auto x = sheet.net_lines.emplace(std::make_pair(uu, uu));
     return &(x.first->second);
 }
 
-void CoreSchematic::delete_junction(const UUID &uu, bool work)
+void CoreSchematic::delete_junction(const UUID &uu)
 {
     auto &sheet = sch.sheets.at(sheet_uuid);
     sheet.junctions.erase(uu);
 }
-void CoreSchematic::delete_line_net(const UUID &uu, bool work)
+void CoreSchematic::delete_line_net(const UUID &uu)
 {
     auto &sheet = sch.sheets.at(sheet_uuid);
     sheet.net_lines.erase(uu);
 }
-void CoreSchematic::delete_schematic_symbol(const UUID &uu, bool work)
+void CoreSchematic::delete_schematic_symbol(const UUID &uu)
 {
     auto &sheet = sch.sheets.at(sheet_uuid);
     sheet.symbols.erase(uu);
 }
-SchematicSymbol *CoreSchematic::insert_schematic_symbol(const UUID &uu, const Symbol *sym, bool work)
+SchematicSymbol *CoreSchematic::insert_schematic_symbol(const UUID &uu, const Symbol *sym)
 {
     auto &sheet = sch.sheets.at(sheet_uuid);
     auto x = sheet.symbols.emplace(std::make_pair(uu, SchematicSymbol{uu, sym}));
@@ -100,31 +105,31 @@ SchematicSymbol *CoreSchematic::insert_schematic_symbol(const UUID &uu, const Sy
     return nullptr;
 }
 
-Line *CoreSchematic::insert_line(const UUID &uu, bool work)
+Line *CoreSchematic::insert_line(const UUID &uu)
 {
     auto &sheet = sch.sheets.at(sheet_uuid);
     auto x = sheet.lines.emplace(std::make_pair(uu, uu));
     return &(x.first->second);
 }
-void CoreSchematic::delete_line(const UUID &uu, bool work)
+void CoreSchematic::delete_line(const UUID &uu)
 {
     auto &sheet = sch.sheets.at(sheet_uuid);
     sheet.lines.erase(uu);
 }
 
-Arc *CoreSchematic::insert_arc(const UUID &uu, bool work)
+Arc *CoreSchematic::insert_arc(const UUID &uu)
 {
     auto &sheet = sch.sheets.at(sheet_uuid);
     auto x = sheet.arcs.emplace(std::make_pair(uu, uu));
     return &(x.first->second);
 }
-void CoreSchematic::delete_arc(const UUID &uu, bool work)
+void CoreSchematic::delete_arc(const UUID &uu)
 {
     auto &sheet = sch.sheets.at(sheet_uuid);
     sheet.arcs.erase(uu);
 }
 
-std::vector<LineNet *> CoreSchematic::get_net_lines(bool work)
+std::vector<LineNet *> CoreSchematic::get_net_lines()
 {
     auto &sheet = sch.sheets.at(sheet_uuid);
     std::vector<LineNet *> r;
@@ -133,7 +138,7 @@ std::vector<LineNet *> CoreSchematic::get_net_lines(bool work)
     }
     return r;
 }
-std::vector<NetLabel *> CoreSchematic::get_net_labels(bool work)
+std::vector<NetLabel *> CoreSchematic::get_net_labels()
 {
     auto &sheet = sch.sheets.at(sheet_uuid);
     std::vector<NetLabel *> r;
@@ -143,7 +148,7 @@ std::vector<NetLabel *> CoreSchematic::get_net_labels(bool work)
     return r;
 }
 
-std::vector<Line *> CoreSchematic::get_lines(bool work)
+std::vector<Line *> CoreSchematic::get_lines()
 {
     auto &sheet = sch.sheets.at(sheet_uuid);
     std::vector<Line *> r;
@@ -153,7 +158,7 @@ std::vector<Line *> CoreSchematic::get_lines(bool work)
     return r;
 }
 
-std::vector<Arc *> CoreSchematic::get_arcs(bool work)
+std::vector<Arc *> CoreSchematic::get_arcs()
 {
     auto &sheet = sch.sheets.at(sheet_uuid);
     std::vector<Arc *> r;
@@ -163,15 +168,32 @@ std::vector<Arc *> CoreSchematic::get_arcs(bool work)
     return r;
 }
 
-void CoreSchematic::delete_text(const UUID &uu, bool work)
+void CoreSchematic::delete_text(const UUID &uu)
 {
     auto &sheet = sch.sheets.at(sheet_uuid);
     sheet.texts.erase(uu);
 }
-Text *CoreSchematic::insert_text(const UUID &uu, bool work)
+Text *CoreSchematic::insert_text(const UUID &uu)
 {
     auto &sheet = sch.sheets.at(sheet_uuid);
     auto x = sheet.texts.emplace(std::make_pair(uu, uu));
+    return &(x.first->second);
+}
+
+Picture *CoreSchematic::get_picture(const UUID &uu)
+{
+    auto &sheet = sch.sheets.at(sheet_uuid);
+    return &sheet.pictures.at(uu);
+}
+void CoreSchematic::delete_picture(const UUID &uu)
+{
+    auto &sheet = sch.sheets.at(sheet_uuid);
+    sheet.pictures.erase(uu);
+}
+Picture *CoreSchematic::insert_picture(const UUID &uu)
+{
+    auto &sheet = sch.sheets.at(sheet_uuid);
+    auto x = sheet.pictures.emplace(std::make_pair(uu, uu));
     return &(x.first->second);
 }
 
@@ -188,6 +210,7 @@ bool CoreSchematic::has_object_type(ObjectType ty) const
     case ObjectType::TEXT:
     case ObjectType::LINE:
     case ObjectType::ARC:
+    case ObjectType::PICTURE:
         return true;
         break;
     default:;
@@ -283,6 +306,13 @@ bool CoreSchematic::get_property(ObjectType type, const UUID &uu, ObjectProperty
                 dynamic_cast<PropertyValueString &>(value).value = "<no part>";
             return true;
 
+        case ObjectProperty::ID::NOPOPULATE:
+            if (block.components.at(uu).part)
+                dynamic_cast<PropertyValueBool &>(value).value = comp->nopopulate;
+            else
+                dynamic_cast<PropertyValueBool &>(value).value = false;
+            return true;
+
         default:
             return false;
         }
@@ -305,6 +335,10 @@ bool CoreSchematic::get_property(ObjectType type, const UUID &uu, ObjectProperty
 
         case ObjectProperty::ID::EXPAND:
             dynamic_cast<PropertyValueInt &>(value).value = static_cast<int>(sym->expand);
+            return true;
+
+        case ObjectProperty::ID::REFDES:
+            dynamic_cast<PropertyValueString &>(value).value = sym->component->refdes + sym->gate->suffix;
             return true;
 
         default:
@@ -335,6 +369,10 @@ bool CoreSchematic::set_property(ObjectType type, const UUID &uu, ObjectProperty
             if (comp->part)
                 return false;
             comp->value = dynamic_cast<const PropertyValueString &>(value).value;
+            break;
+
+        case ObjectProperty::ID::NOPOPULATE:
+            comp->nopopulate = dynamic_cast<const PropertyValueBool &>(value).value;
             break;
 
         default:
@@ -509,6 +547,9 @@ std::string CoreSchematic::get_display_name(ObjectType type, const UUID &uu, con
     case ObjectType::BUS_RIPPER:
         return sheet.bus_rippers.at(uu).bus_member->net->name;
 
+    case ObjectType::TEXT:
+        return sheet.texts.at(uu).text;
+
     default:
         return Core::get_display_name(type, uu);
     }
@@ -522,7 +563,7 @@ void CoreSchematic::add_sheet()
     auto *sheet = &sch.sheets.emplace(uu, uu).first->second;
     sheet->index = sheet_max->second.index + 1;
     sheet->name = "sheet " + std::to_string(sheet->index);
-    sheet->frame = sch.sheets.at(sheet_uuid).frame;
+    sheet->pool_frame = sch.sheets.at(sheet_uuid).pool_frame;
     rebuild();
 }
 
@@ -566,135 +607,6 @@ const Sheet *CoreSchematic::get_canvas_data()
     return &sch.sheets.at(sheet_uuid);
 }
 
-void CoreSchematic::commit()
-{
-    set_needs_save(true);
-}
-
-void CoreSchematic::revert()
-{
-    history_load(history_current);
-    reverted = true;
-}
-
-bool CoreSchematic::can_search_for_object_type(ObjectType ty) const
-{
-    switch (ty) {
-    case ObjectType::SCHEMATIC_SYMBOL:
-    case ObjectType::NET_LABEL:
-    case ObjectType::POWER_SYMBOL:
-    case ObjectType::BUS_RIPPER:
-        return true;
-        break;
-    default:;
-    }
-
-    return false;
-}
-
-static void sort_search_results_schematic(std::list<Core::SearchResult> &results, const Core::SearchQuery &q,
-                                          CoreSchematic *core)
-{
-    results.sort([core, q](const auto &a, const auto &b) {
-        int index_a = core->get_schematic()->sheets.at(a.sheet).index;
-        int index_b = core->get_schematic()->sheets.at(b.sheet).index;
-
-        if (a.sheet == core->get_sheet()->uuid)
-            index_a = -1;
-        if (b.sheet == core->get_sheet()->uuid)
-            index_b = -1;
-
-        if (index_a > index_b)
-            return false;
-        if (index_a < index_b)
-            return true;
-
-        auto da = core->get_display_name(a.type, a.uuid, a.sheet);
-        auto db = core->get_display_name(b.type, b.uuid, b.sheet);
-        auto ina = !Coordf(a.location).in_range(q.area_visible.first, q.area_visible.second);
-        auto inb = !Coordf(b.location).in_range(q.area_visible.first, q.area_visible.second);
-        if (ina > inb)
-            return false;
-        else if (ina < inb)
-            return true;
-
-        if (a.type > b.type)
-            return false;
-        else if (a.type < b.type)
-            return true;
-
-        auto c = strcmp_natural(da, db);
-        if (c > 0)
-            return false;
-        else if (c < 0)
-            return true;
-
-        if (a.location.x > b.location.x)
-            return false;
-        else if (a.location.x < b.location.x)
-            return true;
-
-        return a.location.y > b.location.y;
-    });
-}
-
-std::list<Core::SearchResult> CoreSchematic::search(const SearchQuery &q)
-{
-    std::list<Core::SearchResult> results;
-    if (q.query.size() == 0)
-        return results;
-    for (const auto &it_sheet : sch.sheets) {
-        const auto &sheet = it_sheet.second;
-        if (q.types.count(ObjectType::SCHEMATIC_SYMBOL)) {
-            for (const auto &it : sheet.symbols) {
-                if (it.second.component->refdes.find(q.query) != std::string::npos) {
-                    results.emplace_back(ObjectType::SCHEMATIC_SYMBOL, it.first);
-                    auto &x = results.back();
-                    x.location = it.second.placement.shift;
-                    x.sheet = sheet.uuid;
-                    x.selectable = true;
-                }
-            }
-        }
-        if (q.types.count(ObjectType::NET_LABEL)) {
-            for (const auto &it : sheet.net_labels) {
-                if (it.second.junction->net && it.second.junction->net->name.find(q.query) != std::string::npos) {
-                    results.emplace_back(ObjectType::NET_LABEL, it.first);
-                    auto &x = results.back();
-                    x.location = it.second.junction->position;
-                    x.sheet = sheet.uuid;
-                    x.selectable = true;
-                }
-            }
-        }
-        if (q.types.count(ObjectType::BUS_RIPPER)) {
-            for (const auto &it : sheet.bus_rippers) {
-                if (it.second.bus_member->net && it.second.bus_member->net->name.find(q.query) != std::string::npos) {
-                    results.emplace_back(ObjectType::BUS_RIPPER, it.first);
-                    auto &x = results.back();
-                    x.location = it.second.get_connector_pos();
-                    x.sheet = sheet.uuid;
-                    x.selectable = true;
-                }
-            }
-        }
-        if (q.types.count(ObjectType::POWER_SYMBOL)) {
-            for (const auto &it : sheet.power_symbols) {
-                if (it.second.junction->net && it.second.junction->net->name.find(q.query) != std::string::npos) {
-                    results.emplace_back(ObjectType::POWER_SYMBOL, it.first);
-                    auto &x = results.back();
-                    x.location = it.second.junction->position;
-                    x.sheet = sheet.uuid;
-                    x.selectable = true;
-                }
-            }
-        }
-    }
-    sort_search_results_schematic(results, q, this);
-
-    return results;
-}
-
 void CoreSchematic::history_push()
 {
     history.push_back(std::make_unique<CoreSchematic::HistoryItem>(block, sch));
@@ -706,7 +618,8 @@ void CoreSchematic::history_push()
 void CoreSchematic::history_load(unsigned int i)
 {
     auto x = dynamic_cast<CoreSchematic::HistoryItem *>(history.at(history_current).get());
-    sch = x->sch;
+    sch.~Schematic();
+    new (&sch) Schematic(x->sch);
     block = x->block;
     sch.block = &block;
     sch.update_refs();
@@ -718,16 +631,28 @@ std::pair<Coordi, Coordi> CoreSchematic::get_bbox()
     return get_sheet()->frame.get_bbox();
 }
 
-void CoreSchematic::save()
+const std::string &CoreSchematic::get_filename() const
+{
+    return m_schematic_filename;
+}
+
+void CoreSchematic::save(const std::string &suffix)
 {
     sch.rules = rules;
     block.bom_export_settings = bom_export_settings;
     sch.pdf_export_settings = pdf_export_settings;
-    save_json_to_file(m_schematic_filename, sch.serialize());
-    save_json_to_file(m_block_filename, block.serialize());
-    set_needs_save(false);
-
-    // json j = block.serialize();
-    // std::cout << std::setw(4) << j << std::endl;
+    save_json_to_file(m_schematic_filename + suffix, sch.serialize());
+    save_json_to_file(m_block_filename + suffix, block.serialize());
+    sch.save_pictures(m_pictures_dir);
 }
+
+
+void CoreSchematic::delete_autosave()
+{
+    if (Glib::file_test(m_schematic_filename + autosave_suffix, Glib::FILE_TEST_IS_REGULAR))
+        Gio::File::create_for_path(m_schematic_filename + autosave_suffix)->remove();
+    if (Glib::file_test(m_block_filename + autosave_suffix, Glib::FILE_TEST_IS_REGULAR))
+        Gio::File::create_for_path(m_block_filename + autosave_suffix)->remove();
+}
+
 } // namespace horizon

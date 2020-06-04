@@ -11,12 +11,14 @@
 #include "pool-prj-mgr/pool-prj-mgr-app_win.hpp"
 #include "util/csv.hpp"
 #include "widgets/tag_entry.hpp"
+#include "widgets/pool_browser_package.hpp"
+#include "widgets/preview_canvas.hpp"
 
 namespace horizon {
 LocationEntry *PartWizard::pack_location_entry(const Glib::RefPtr<Gtk::Builder> &x, const std::string &w,
                                                Gtk::Button **button_other)
 {
-    auto en = Gtk::manage(new LocationEntry());
+    auto en = Gtk::manage(new LocationEntry(pool_base_path));
     if (button_other) {
         *button_other = Gtk::manage(new Gtk::Button());
         en->pack_start(**button_other, false, false);
@@ -29,15 +31,17 @@ LocationEntry *PartWizard::pack_location_entry(const Glib::RefPtr<Gtk::Builder> 
     return en;
 }
 
-PartWizard::PartWizard(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder> &x, const Package *p,
+PartWizard::PartWizard(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder> &x, const UUID &pkg_uuid,
                        const std::string &bp, class Pool *po, PoolProjectManagerAppWindow *aw)
-    : Gtk::Window(cobject), pkg(p), pool_base_path(bp), pool(po), part(UUID::random()), entity(UUID::random()),
-      appwin(aw), state_store(this, "part-wizard")
+    : Gtk::Window(cobject), pool_base_path(bp), pool(po), part(UUID::random()), entity(UUID::random()), appwin(aw),
+      state_store(this, "part-wizard")
 {
+    x->get_widget("header", header);
     x->get_widget("stack", stack);
     x->get_widget("button_back", button_back);
     x->get_widget("button_next", button_next);
     x->get_widget("button_finish", button_finish);
+    x->get_widget("button_select", button_select);
 
     x->get_widget("pads_lb", pads_lb);
     x->get_widget("link_pads", button_link_pads);
@@ -111,8 +115,6 @@ PartWizard::PartWizard(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder>
 
     sg_name = Gtk::SizeGroup::create(Gtk::SIZE_GROUP_HORIZONTAL);
 
-    part.attributes[Part::Attribute::MANUFACTURER] = {false, pkg->manufacturer};
-
     gate_name_store = Gtk::ListStore::create(list_columns);
 
     {
@@ -120,26 +122,43 @@ PartWizard::PartWizard(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder>
         row[list_columns.name] = "Main";
     }
 
-    create_pad_editors();
-
     pads_lb->set_sort_func([](Gtk::ListBoxRow *a, Gtk::ListBoxRow *b) {
         auto na = dynamic_cast<PadEditor *>(a->get_child())->names.front();
         auto nb = dynamic_cast<PadEditor *>(b->get_child())->names.front();
         return strcmp_natural(na, nb);
     });
 
-    part.package = pkg;
     part.entity = &entity;
-
 
     button_link_pads->signal_clicked().connect(sigc::mem_fun(*this, &PartWizard::handle_link));
     button_unlink_pads->signal_clicked().connect(sigc::mem_fun(*this, &PartWizard::handle_unlink));
     button_import_pads->signal_clicked().connect(sigc::mem_fun(*this, &PartWizard::handle_import));
     button_next->signal_clicked().connect(sigc::mem_fun(*this, &PartWizard::handle_next));
     button_back->signal_clicked().connect(sigc::mem_fun(*this, &PartWizard::handle_back));
+    button_select->signal_clicked().connect(sigc::mem_fun(*this, &PartWizard::handle_select));
     button_finish->signal_clicked().connect(sigc::mem_fun(*this, &PartWizard::handle_finish));
 
-    set_mode(Mode::ASSIGN);
+    {
+        Gtk::Paned *page_package;
+        x->get_widget("page_package", page_package);
+        browser_package = Gtk::manage(new PoolBrowserPackage(pool));
+        browser_package->show();
+        page_package->add1(*browser_package);
+
+        auto preview = Gtk::manage(new PreviewCanvas(*pool, true));
+        button_select->set_sensitive(false);
+        browser_package->signal_selected().connect([this, preview] {
+            preview->load(ObjectType::PACKAGE, browser_package->get_selected());
+            button_select->set_sensitive(browser_package->get_selected());
+        });
+        browser_package->signal_activated().connect(sigc::mem_fun(*this, &PartWizard::handle_select));
+        browser_package->go_to(pkg_uuid);
+
+        preview->show();
+        page_package->add2(*preview);
+    }
+
+    set_mode(Mode::PACKAGE);
 
     signal_delete_event().connect([this](GdkEventAny *ev) {
         if (processes.size()) {
@@ -150,6 +169,9 @@ PartWizard::PartWizard(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder>
             return true; // keep open
         }
         if (files_saved.size())
+            return false;
+
+        if (mode == Mode::PACKAGE)
             return false;
 
         Gtk::MessageDialog md(*this, "Really close?", false /* use_markup */, Gtk::MESSAGE_QUESTION, Gtk::BUTTONS_NONE);
@@ -166,6 +188,16 @@ PartWizard::PartWizard(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder>
             return true; // keep window open
         }
     });
+}
+
+void PartWizard::set_pkg(const Package *p)
+{
+    if (pkg)
+        return;
+    pkg = p;
+    part.attributes[Part::Attribute::MANUFACTURER] = {false, pkg->manufacturer};
+    part.package = pkg;
+    create_pad_editors();
 }
 
 void PartWizard::create_pad_editors()
@@ -194,18 +226,28 @@ void PartWizard::set_mode(PartWizard::Mode mo)
 {
     if (mo == Mode::ASSIGN && processes.size() > 0)
         return;
+
     if (mo == Mode::ASSIGN) {
         stack->set_visible_child("assign");
+        header->set_subtitle("Assign pins");
     }
-    else {
+    else if (mo == Mode::EDIT) {
         prepare_edit();
         stack->set_visible_child("edit");
         update_can_finish();
+        header->set_subtitle("Part details & symbol");
     }
+    else if (mo == Mode::PACKAGE) {
+        prepare_edit();
+        stack->set_visible_child("package");
+        header->set_subtitle("Select package");
+    }
+
 
     button_back->set_visible(mo == Mode::EDIT);
     button_finish->set_visible(mo == Mode::EDIT);
     button_next->set_visible(mo == Mode::ASSIGN);
+    button_select->set_visible(mo == Mode::PACKAGE);
     mode = mo;
 }
 
@@ -221,6 +263,15 @@ void PartWizard::handle_back()
     if (processes.size())
         return;
     set_mode(Mode::ASSIGN);
+}
+
+void PartWizard::handle_select()
+{
+    auto p = browser_package->get_selected();
+    if (p) {
+        set_pkg(pool->get_package(p));
+        set_mode(Mode::ASSIGN);
+    }
 }
 
 std::vector<std::string> PartWizard::get_filenames()
@@ -352,11 +403,11 @@ void PartWizard::finish()
             auto unit_filename = ed->unit_location_entry->get_filename();
             save_json_to_file(unit_filename, ed->gate->unit->serialize());
 
-            auto symbol_filename_dest = ed->symbol_location_entry->get_filename();
             auto symbol_filename_src = pool->get_tmp_filename(ObjectType::SYMBOL, symbols.at(ed->gate->unit->uuid));
-            auto fi_src = Gio::File::create_for_path(symbol_filename_src);
-            auto fi_dest = Gio::File::create_for_path(symbol_filename_dest);
-            fi_src->copy(fi_dest, Gio::FILE_COPY_OVERWRITE);
+            auto symbol_filename_dest = ed->symbol_location_entry->get_filename();
+            auto sym = Symbol::new_from_file(symbol_filename_src, *pool);
+            sym.name = ed->symbol_name_entry->get_text();
+            save_json_to_file(symbol_filename_dest, sym.serialize());
         }
     }
     save_json_to_file(entity_location_entry->get_filename(), entity.serialize());
@@ -641,10 +692,22 @@ void PartWizard::prepare_edit()
             ed->edit_symbol_button->signal_clicked().connect([this, ed] {
                 auto symbol_uuid = symbols.at(ed->gate->unit->uuid);
                 auto symbol_filename = pool->get_tmp_filename(ObjectType::SYMBOL, symbol_uuid);
+                {
+                    auto sym = Symbol::new_from_file(symbol_filename, *pool);
+                    sym.name = ed->symbol_name_entry->get_text();
+                    save_json_to_file(symbol_filename, sym.serialize());
+                }
+
                 auto proc = appwin->spawn(PoolProjectManagerProcess::Type::IMP_SYMBOL, {symbol_filename});
                 processes.emplace(symbol_filename, proc);
-                proc->signal_exited().connect([this, symbol_filename](int status, bool modified) {
+                symbols_open.emplace(symbol_uuid);
+                proc->signal_exited().connect([this, symbol_filename, symbol_uuid, ed](int status, bool modified) {
                     processes.erase(symbol_filename);
+                    symbols_open.erase(symbol_uuid);
+                    {
+                        auto sym = Symbol::new_from_file(symbol_filename, *pool);
+                        ed->symbol_name_entry->set_text(sym.name);
+                    }
                     update_can_finish();
                     update_symbol_pins_mapped();
                 });
@@ -828,10 +891,16 @@ void PartWizard::autofill()
             std::string suffix = ed->suffix_entry->get_text();
             trim(suffix);
             if (suffix.size()) {
-                ed->unit_name_entry->set_text(part_mpn_entry->get_text() + " " + suffix);
+                auto txt = part_mpn_entry->get_text() + " " + suffix;
+                ed->unit_name_entry->set_text(txt);
+                if (ed->symbol_name_entry->get_sensitive())
+                    ed->symbol_name_entry->set_text(txt);
             }
             else {
-                ed->unit_name_entry->set_text(part_mpn_entry->get_text());
+                auto txt = part_mpn_entry->get_text();
+                ed->unit_name_entry->set_text(txt);
+                if (ed->symbol_name_entry->get_sensitive())
+                    ed->symbol_name_entry->set_text(txt);
             }
             ed->unit_location_entry->set_filename(
                     Glib::build_filename(pool_base_path, "units", ed->get_suffixed_filename_from_part()));
@@ -865,25 +934,11 @@ void PartWizard::update_can_finish()
         if (v)
             *v = t.size();
     };
-    auto check_location_ends_json = [this](LocationEntry *e, bool *v = nullptr) {
-        std::string t = e->get_filename();
-        if (!endswith(t, ".json")) {
-            e->set_warning("Filename has to end in .json");
-            valid = false;
-            if (v)
-                *v = false;
-        }
-        else {
-            e->set_warning("");
-            if (v)
-                *v = true;
-        }
-    };
 
     check_entry_not_empty(part_mpn_entry, "MPN is empty", &mpn_valid);
     check_entry_not_empty(entity_name_entry, "Entity name is empty");
     check_entry_not_empty(entity_prefix_entry, "Entity prefix is empty");
-    check_location_ends_json(part_location_entry, &part_filename_valid);
+    valid = valid && part_location_entry->check_ends_json(&part_filename_valid);
 
     std::set<std::string> symbol_filenames;
     std::set<std::string> unit_filenames;
@@ -901,8 +956,8 @@ void PartWizard::update_can_finish()
             entry_set_warning(ed->suffix_entry, "");
             entry_set_warning(ed->unit_name_entry, "");
 
-            check_location_ends_json(ed->unit_location_entry);
-            check_location_ends_json(ed->symbol_location_entry);
+            valid = valid && ed->unit_location_entry->check_ends_json();
+            valid = valid && ed->symbol_location_entry->check_ends_json();
 
             check_entry_not_empty(ed->unit_name_entry, "Unit name is empty");
             std::string unit_filename = ed->unit_location_entry->get_filename();
@@ -940,6 +995,8 @@ void PartWizard::update_can_finish()
                 entry_set_warning(ed->unit_name_entry, "Duplicate unit name");
                 valid = false;
             }
+
+            ed->set_can_edit_symbol_name(symbols_open.count(symbols.at(ed->gate->unit->uuid)) == 0);
         }
     }
     update_steps();
@@ -1037,15 +1094,15 @@ void PartWizard::update_steps()
     steps_grid->show_all();
 }
 
-PartWizard *PartWizard::create(const Package *p, const std::string &bp, class Pool *po,
+PartWizard *PartWizard::create(const UUID &pkg_uuid, const std::string &bp, class Pool *po,
                                class PoolProjectManagerAppWindow *aw)
 {
     PartWizard *w;
     Glib::RefPtr<Gtk::Builder> x = Gtk::Builder::create();
     x->add_from_resource(
-            "/net/carrotIndustries/horizon/pool-prj-mgr/pool-mgr/part_wizard/"
+            "/org/horizon-eda/horizon/pool-prj-mgr/pool-mgr/part_wizard/"
             "part_wizard.ui");
-    x->get_widget_derived("part_wizard", w, p, bp, po, aw);
+    x->get_widget_derived("part_wizard", w, pkg_uuid, bp, po, aw);
     return w;
 }
 

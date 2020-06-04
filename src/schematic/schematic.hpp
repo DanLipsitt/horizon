@@ -6,6 +6,7 @@
 #include "sheet.hpp"
 #include "schematic_rules.hpp"
 #include "common/pdf_export_settings.hpp"
+#include <glibmm/regex.h>
 #include <vector>
 #include <map>
 #include <fstream>
@@ -29,7 +30,6 @@ private:
     Schematic(const UUID &uu, const json &, Block &block, class Pool &pool);
     unsigned int update_nets();
 
-
 public:
     static Schematic new_from_file(const std::string &filename, Block &block, Pool &pool);
     Schematic(const UUID &uu, Block &block);
@@ -42,7 +42,7 @@ public:
     void expand(bool careful = false);
 
     Schematic(const Schematic &sch);
-    void operator=(const Schematic &sch);
+    void operator=(const Schematic &sch) = delete;
     /**
      * objects owned by the Sheets may hold pointers to other objects of the
      * same sheet
@@ -75,13 +75,21 @@ public:
      */
     void unsmash_symbol(Sheet *sheet, SchematicSymbol *sym);
 
+    bool delete_net_line(Sheet *sheet, LineNet *line);
+
+    bool place_bipole_on_line(Sheet *sheet, SchematicSymbol *sym);
+
+    void swap_gates(const UUID &comp, const UUID &g1, const UUID &g2);
+
+    std::map<UUIDPath<2>, std::string> get_unplaced_gates() const;
+
+    static Glib::RefPtr<Glib::Regex> get_sheetref_regex();
 
     UUID uuid;
     Block *block;
     std::string name;
     std::map<UUID, Sheet> sheets;
     SchematicRules rules;
-    std::map<std::string, std::string> title_block_values;
     bool group_tag_visible = false;
 
 
@@ -107,5 +115,7 @@ public:
     PDFExportSettings pdf_export_settings;
 
     json serialize() const;
+    void save_pictures(const std::string &dir) const;
+    void load_pictures(const std::string &dir);
 };
 } // namespace horizon

@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright 2019 horizon-eda.org -->
+<component type="desktop-application">
+  <id>org.horizon_eda.HorizonEDA</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0+</project_license>
+  <name>Horizon EDA</name>
+  <summary>A free EDA package</summary>
+
+  <description>
+    <p>
+      Horizon EDA is an Electronic Design Automation package supporting an integrated end-to-end workflow for printed circuit board design including parts management and schematic entry. 
+    </p>
+  </description>
+
+  <launchable type="desktop-id">org.horizon_eda.HorizonEDA.desktop</launchable>
+
+  <screenshots>
+    <screenshot type="default">
+      <image>https://horizon-eda.org/screenshots/brd.png</image>
+    </screenshot>
+    <screenshot type="default">
+      <image>https://horizon-eda.org/screenshots/sch.png</image>
+    </screenshot>
+    <screenshot type="default">
+      <image>https://horizon-eda.org/screenshots/pool-mgr.png</image>
+    </screenshot>
+    <screenshot type="default">
+      <image>https://horizon-eda.org/screenshots/3d.png</image>
+    </screenshot>
+  </screenshots>
+
+  <url type="homepage">https://horizon-eda.org/</url>
+
+  <provides>
+    <binary>horizon-eda</binary>
+  </provides>
+
+  <content_rating type="oars-1.0" />
+
+  <releases>
+    <release version="1.1.1" date="2020-05-04">
+      <url>https://github.com/horizon-eda/horizon/releases/tag/v1.1.1</url>
+      <description>
+        <p>
+          Fix Makefile to not compile during make install.
+        </p>
+      </description>
+    </release>
+    <release version="1.1.0" date="2020-04-29">
+      <url>https://github.com/horizon-eda/horizon/releases/tag/v1.1.0</url>
+      <description>
+        <p>New features</p>
+        <ul>
+          <li>Pick&amp;place export</li>
+          <li>Support replacing project metadata variables on board</li>
+          <li>Airwire filter</li>
+          <li>Support for touchscreen pan and zoom gestures</li>
+          <li>Support for "dot not populate" components</li>
+          <li>Action for selecting all vertices of a polygon</li>
+          <li>Panelisation</li>
+          <li>Outline layer in packages</li>
+          <li>Automatic update of pool cache status and hint when placing out of date part</li>
+          <li>Recursive git add from git tab in pool manager</li>
+          <li>Tool for resizing symbols</li>
+          <li>Tool for generating silkscreen</li>
+          <li>Tool for rounding off polygon vertices</li>
+        </ul>
+      </description>
+    </release>
+    <release version="1.0.0" date="2020-01-29">
+      <description>
+        <p>initial release</p>
+      </description>
+    </release>
+    <release version="0.9.7" date="2020-01-17">
+      <description>
+        <p>prerelease to test packaging</p>
+      </description>
+    </release>
+    <release version="0.9.6" date="2019-12-13">
+      <description>
+        <p>prerelease to test packaging</p>
+      </description>
+    </release>
+  </releases>
+</component>

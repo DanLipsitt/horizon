@@ -2,10 +2,11 @@
 #include <string>
 #include <vector>
 #include <gdk/gdk.h>
-#include "core/tool_id.hpp"
 #include <functional>
 
 namespace horizon {
+
+enum class ToolID;
 
 enum class ActionID {
     NONE,
@@ -73,8 +74,23 @@ enum class ActionID {
     SELECT_ALL,
     PDF_EXPORT_WINDOW,
     EXPORT_PDF,
-    BACKANNOTATE_CONNECTION_LINES
+    BACKANNOTATE_CONNECTION_LINES,
+    SELECT_MORE,
+    SELECT_MORE_NO_VIA,
+    STEP_EXPORT_WINDOW,
+    EXPORT_STEP,
+    PNP_EXPORT_WINDOW,
+    EXPORT_PNP,
+    RESET_AIRWIRE_FILTER,
+    FILTER_AIRWIRES,
+    AIRWIRE_FILTER_WINDOW,
+    SELECT_POLYGON,
+    FAB_OUTPUT_WINDOW,
+    GEN_FAB_OUTPUT,
+    FOOTPRINT_GENERATOR
 };
+
+using ActionToolID = std::pair<ActionID, ToolID>;
 
 enum class ActionGroup {
     ALL,
@@ -94,12 +110,15 @@ enum class ActionGroup {
     VIEW,
     FRAME,
     GROUP_TAG,
-    SEARCH
+    SEARCH,
+    EXPORT_IMPORT,
+    TUNING,
 };
 
 typedef std::vector<std::pair<unsigned int, GdkModifierType>> KeySequence;
 
 std::string key_sequence_to_string(const KeySequence &keys);
+std::string key_sequences_to_string(const std::vector<KeySequence> &seqs);
 
 class ActionConnection {
 public:
@@ -114,7 +133,7 @@ public:
     std::function<void(const ActionConnection &)> cb;
 };
 
-std::pair<ActionID, ToolID> make_action(ActionID id);
-std::pair<ActionID, ToolID> make_action(ToolID id);
+ActionToolID make_action(ActionID id);
+ActionToolID make_action(ToolID id);
 
 } // namespace horizon

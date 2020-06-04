@@ -3,19 +3,19 @@
 #include "util/gtk_util.hpp"
 #include "util/util.hpp"
 #include "nlohmann/json.hpp"
+#include "core/tool_id.hpp"
 
 namespace horizon {
 class ActionEditor : public Gtk::Box {
 public:
-    ActionEditor(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder> &x, Preferences *prefs,
-                 std::pair<ActionID, ToolID> action, ActionCatalogItem::Availability availability,
-                 const std::string &title, KeySequencesPreferencesEditor *parent);
-    static ActionEditor *create(Preferences *prefs, std::pair<ActionID, ToolID> action,
-                                ActionCatalogItem::Availability availability, const std::string &title,
-                                KeySequencesPreferencesEditor *parent);
+    ActionEditor(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder> &x, Preferences *prefs, ActionToolID action,
+                 ActionCatalogItem::Availability availability, const std::string &title,
+                 KeySequencesPreferencesEditor *parent);
+    static ActionEditor *create(Preferences *prefs, ActionToolID action, ActionCatalogItem::Availability availability,
+                                const std::string &title, KeySequencesPreferencesEditor *parent);
 
 private:
-    std::pair<ActionID, ToolID> action;
+    ActionToolID action;
     ActionCatalogItem::Availability availability;
     KeySequencesPreferencesEditor *parent;
     Preferences *preferences;
@@ -117,7 +117,7 @@ void KeySequencesPreferencesEditor::update_action_editors()
     auto it = key_sequences_treeview->get_selection()->get_selected();
     if (it) {
         Gtk::TreeModel::Row row = *it;
-        std::pair<ActionID, ToolID> action = row[tree_columns.action];
+        ActionToolID action = row[tree_columns.action];
         if (action.first != ActionID::NONE) {
             const auto cat = action_catalog.at(row[tree_columns.action]);
             auto av = static_cast<unsigned int>(cat.availability);
@@ -186,6 +186,8 @@ void KeySequencesPreferencesEditor::handle_save()
 
         if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(native)) == GTK_RESPONSE_ACCEPT) {
             filename = chooser->get_filename();
+            if (!endswith(filename, ".json"))
+                filename += ".json";
         }
     }
     if (filename.size()) {
@@ -252,7 +254,7 @@ void KeySequencesPreferencesEditor::handle_load()
 
 void KeySequencesPreferencesEditor::handle_load_default()
 {
-    keyseq_preferences->load_from_json(json_from_resource("/net/carrotIndustries/horizon/imp/keys_default.json"));
+    keyseq_preferences->load_from_json(json_from_resource("/org/horizon-eda/horizon/imp/keys_default.json"));
     update_action_editors();
     update_keys();
     preferences->signal_changed().emit();
@@ -263,7 +265,7 @@ KeySequencesPreferencesEditor *KeySequencesPreferencesEditor::create(Preferences
 {
     KeySequencesPreferencesEditor *w;
     Glib::RefPtr<Gtk::Builder> x = Gtk::Builder::create();
-    x->add_from_resource("/net/carrotIndustries/horizon/pool-prj-mgr/preferences.ui", "key_sequences_box");
+    x->add_from_resource("/org/horizon-eda/horizon/pool-prj-mgr/preferences.ui", "key_sequences_box");
     x->get_widget_derived("key_sequences_box", w, prefs, keyseq_prefs);
     w->reference();
     return w;
@@ -365,8 +367,8 @@ public:
 
 
 ActionEditor::ActionEditor(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder> &x, Preferences *prefs,
-                           std::pair<ActionID, ToolID> act, ActionCatalogItem::Availability av,
-                           const std::string &title, KeySequencesPreferencesEditor *p)
+                           ActionToolID act, ActionCatalogItem::Availability av, const std::string &title,
+                           KeySequencesPreferencesEditor *p)
     : Gtk::Box(cobject), action(act), availability(av), parent(p), preferences(prefs)
 {
     Gtk::Label *la;
@@ -465,13 +467,13 @@ void ActionEditor::update()
 }
 
 
-ActionEditor *ActionEditor::create(Preferences *prefs, std::pair<ActionID, ToolID> action,
+ActionEditor *ActionEditor::create(Preferences *prefs, ActionToolID action,
                                    ActionCatalogItem::Availability availability, const std::string &title,
                                    KeySequencesPreferencesEditor *parent)
 {
     ActionEditor *w;
     Glib::RefPtr<Gtk::Builder> x = Gtk::Builder::create();
-    x->add_from_resource("/net/carrotIndustries/horizon/pool-prj-mgr/preferences.ui", "action_editor");
+    x->add_from_resource("/org/horizon-eda/horizon/pool-prj-mgr/preferences.ui", "action_editor");
     x->get_widget_derived("action_editor", w, prefs, action, availability, title, parent);
     w->reference();
     return w;

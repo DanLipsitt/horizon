@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <memory>
 #include "nlohmann/json.hpp"
+#include <giomm/file.h>
+#include <glibmm/fileutils.h>
 
 namespace horizon {
 CoreFrame::CoreFrame(const std::string &frame_filename)
@@ -31,23 +33,23 @@ bool CoreFrame::has_object_type(ObjectType ty) const
     return false;
 }
 
-std::map<UUID, Polygon> *CoreFrame::get_polygon_map(bool work)
+std::map<UUID, Polygon> *CoreFrame::get_polygon_map()
 {
     return &frame.polygons;
 }
-std::map<UUID, Junction> *CoreFrame::get_junction_map(bool work)
+std::map<UUID, Junction> *CoreFrame::get_junction_map()
 {
     return &frame.junctions;
 }
-std::map<UUID, Text> *CoreFrame::get_text_map(bool work)
+std::map<UUID, Text> *CoreFrame::get_text_map()
 {
     return &frame.texts;
 }
-std::map<UUID, Line> *CoreFrame::get_line_map(bool work)
+std::map<UUID, Line> *CoreFrame::get_line_map()
 {
     return &frame.lines;
 }
-std::map<UUID, Arc> *CoreFrame::get_arc_map(bool work)
+std::map<UUID, Arc> *CoreFrame::get_arc_map()
 {
     return &frame.arcs;
 }
@@ -73,17 +75,6 @@ Frame *CoreFrame::get_frame()
     return &frame;
 }
 
-void CoreFrame::commit()
-{
-    set_needs_save(true);
-}
-
-void CoreFrame::revert()
-{
-    history_load(history_current);
-    reverted = true;
-}
-
 CoreFrame::HistoryItem::HistoryItem(const Frame &fr) : frame(fr)
 {
 }
@@ -106,12 +97,21 @@ std::pair<Coordi, Coordi> CoreFrame::get_bbox()
     return frame.get_bbox();
 }
 
-void CoreFrame::save()
+const std::string &CoreFrame::get_filename() const
+{
+    return m_frame_filename;
+}
+
+void CoreFrame::save(const std::string &suffix)
 {
     s_signal_save.emit();
     auto j = frame.serialize();
-    save_json_to_file(m_frame_filename, j);
+    save_json_to_file(m_frame_filename + suffix, j);
+}
 
-    set_needs_save(false);
+void CoreFrame::delete_autosave()
+{
+    if (Glib::file_test(m_frame_filename + autosave_suffix, Glib::FILE_TEST_IS_REGULAR))
+        Gio::File::create_for_path(m_frame_filename + autosave_suffix)->remove();
 }
 } // namespace horizon

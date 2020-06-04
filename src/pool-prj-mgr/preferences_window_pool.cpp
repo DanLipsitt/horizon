@@ -25,7 +25,7 @@ public:
         PoolItemEditor *w;
         Glib::RefPtr<Gtk::Builder> x = Gtk::Builder::create();
         std::vector<Glib::ustring> objs = {"pool_item_box", "image1"};
-        x->add_from_resource("/net/carrotIndustries/horizon/pool-prj-mgr/prj-mgr/prefs.ui", objs);
+        x->add_from_resource("/org/horizon-eda/horizon/pool-prj-mgr/prj-mgr/prefs.ui", objs);
         x->get_widget_derived("pool_item_box", w, pool);
 
         w->reference();
@@ -42,42 +42,42 @@ private:
 };
 
 PoolPreferencesEditor::PoolPreferencesEditor(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder> &x)
-    : Gtk::Box(cobject), mgr(PoolManager::get())
+    : Gtk::ScrolledWindow(cobject), mgr(PoolManager::get())
 {
     x->get_widget("listbox", listbox);
-    x->get_widget("button_add_pool", button_add_pool);
     listbox->set_header_func(&header_func_separator);
     size_group = Gtk::SizeGroup::create(Gtk::SIZE_GROUP_HORIZONTAL);
     show_all();
 
-    button_add_pool->signal_clicked().connect([this] {
-        auto top = dynamic_cast<Gtk::Window *>(get_ancestor(GTK_TYPE_WINDOW));
-        GtkFileChooserNative *native =
-                gtk_file_chooser_native_new("Add Pool", top->gobj(), GTK_FILE_CHOOSER_ACTION_OPEN, "_Open", "_Cancel");
-        auto chooser = Glib::wrap(GTK_FILE_CHOOSER(native));
-        auto filter = Gtk::FileFilter::create();
-        filter->set_name("Horizon pool (pool.json)");
-        filter->add_pattern("pool.json");
-#ifdef __APPLE__
-        // full file name dnt worked on mac
-        filter->add_pattern("*.json");
-#endif
-        chooser->add_filter(filter);
-
-        if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(native)) == GTK_RESPONSE_ACCEPT) {
-            auto path = chooser->get_file()->get_parent()->get_path();
-            mgr.add_pool(path);
-            update();
-        }
-    });
+    listbox->signal_row_activated().connect([this](Gtk::ListBoxRow *row) { add_pool(""); });
     update();
+}
+
+void PoolPreferencesEditor::add_pool(const std::string &path)
+{
+    auto top = dynamic_cast<Gtk::Window *>(get_ancestor(GTK_TYPE_WINDOW));
+    GtkFileChooserNative *native =
+            gtk_file_chooser_native_new("Add Pool", top->gobj(), GTK_FILE_CHOOSER_ACTION_OPEN, "_Open", "_Cancel");
+    auto chooser = Glib::wrap(GTK_FILE_CHOOSER(native));
+    auto filter = Gtk::FileFilter::create();
+    filter->set_name("Horizon pool (pool.json)");
+    filter->add_pattern("pool.json");
+    chooser->add_filter(filter);
+    if (path.size())
+        chooser->set_filename(path);
+
+    if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(native)) == GTK_RESPONSE_ACCEPT) {
+        auto cpath = chooser->get_file()->get_parent()->get_path();
+        mgr.add_pool(cpath);
+        update();
+    }
 }
 
 PoolPreferencesEditor *PoolPreferencesEditor::create()
 {
     PoolPreferencesEditor *w;
     Glib::RefPtr<Gtk::Builder> x = Gtk::Builder::create();
-    x->add_from_resource("/net/carrotIndustries/horizon/pool-prj-mgr/prj-mgr/prefs.ui", "box");
+    x->add_from_resource("/org/horizon-eda/horizon/pool-prj-mgr/prj-mgr/prefs.ui", "box");
     x->get_widget_derived("box", w);
 
     w->reference();
@@ -93,7 +93,11 @@ void PoolPreferencesEditor::update()
     auto pools = mgr.get_pools();
     for (const auto &it : pools) {
         auto x = PoolItemEditor::create(it.second);
-        listbox->add(*x);
+        auto row = Gtk::manage(new Gtk::ListBoxRow);
+        row->add(*x);
+        row->show_all();
+        listbox->add(*row);
+        row->set_activatable(false);
         size_group->add_widget(*x->box);
         x->unreference();
         std::string bp = it.first;
@@ -105,6 +109,12 @@ void PoolPreferencesEditor::update()
             mgr.set_pool_enabled(bp, x->switch_enabled->get_active());
             update();
         });
+    }
+    {
+        auto la = Gtk::manage(new Gtk::Label("Add pool…"));
+        la->property_margin() = 10;
+        la->show();
+        listbox->add(*la);
     }
 }
 } // namespace horizon

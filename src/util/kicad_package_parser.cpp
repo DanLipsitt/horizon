@@ -83,11 +83,11 @@ void KiCadPackageParser::parse_line(const SEXPR::SEXPR *data)
             }
             else if (tag == "layer") {
                 auto l = ch->GetChild(1)->GetSymbol();
-                if (l == "Dwgs.User") {
-                    return;
-                }
-                else {
+                try {
                     layer = get_layer(l);
+                }
+                catch (...) {
+                    return; // ignore
                 }
             }
             else if (tag == "width") {
@@ -131,6 +131,7 @@ void KiCadPackageParser::parse_pad(const SEXPR::SEXPR *data)
     int drill = 0;
     int drill_length = 0;
     std::set<int> layers;
+    double roundrect_rratio = 1;
 
     for (size_t i_ch = 0; i_ch < nc; i_ch++) {
         auto ch = data->GetChild(i_ch);
@@ -160,16 +161,31 @@ void KiCadPackageParser::parse_pad(const SEXPR::SEXPR *data)
                     drill = ch->GetChild(1)->GetDouble() * 1_mm;
                 }
             }
+            else if (tag == "roundrect_rratio") {
+                roundrect_rratio = ch->GetChild(1)->GetDouble();
+            }
         }
     }
 
-    enum class PadType { INVALID, SMD_RECT, TH_CIRC, NPTH_CIRC, TH_OBROUND };
+    enum class PadType { INVALID, SMD_RECT, SMD_RECT_ROUND, SMD_OBROUND, SMD_CIRC, TH_CIRC, NPTH_CIRC, TH_OBROUND };
     PadType pad_type = PadType::INVALID;
 
     std::string padstack_name;
     if (type == "smd" && shape == "rect" && layers.count(BoardLayers::TOP_COPPER)) {
         padstack_name = "smd rectangular";
         pad_type = PadType::SMD_RECT;
+    }
+    else if (type == "smd" && shape == "oval" && layers.count(BoardLayers::TOP_COPPER)) {
+        padstack_name = "smd obround";
+        pad_type = PadType::SMD_OBROUND;
+    }
+    else if (type == "smd" && shape == "roundrect" && layers.count(BoardLayers::TOP_COPPER)) {
+        padstack_name = "smd rectangular rounded";
+        pad_type = PadType::SMD_RECT_ROUND;
+    }
+    else if (type == "smd" && shape == "circle" && layers.count(BoardLayers::TOP_COPPER)) {
+        padstack_name = "smd circular";
+        pad_type = PadType::SMD_CIRC;
     }
     else if (type == "thru_hole" && shape == "circle" && layers.count(BoardLayers::TOP_COPPER)) {
         padstack_name = "th circular";
@@ -216,6 +232,24 @@ void KiCadPackageParser::parse_pad(const SEXPR::SEXPR *data)
         if (pad_type == PadType::SMD_RECT) {
             pad.parameter_set[ParameterID::PAD_WIDTH] = size.x;
             pad.parameter_set[ParameterID::PAD_HEIGHT] = size.y;
+        }
+        else if (pad_type == PadType::SMD_OBROUND) {
+            if (size.y > size.x) {
+                std::swap(size.x, size.y);
+                pad.placement.inc_angle_deg(90);
+                if (pad.placement.get_angle_deg() == 180)
+                    pad.placement.set_angle(0);
+            }
+            pad.parameter_set[ParameterID::PAD_WIDTH] = size.x;
+            pad.parameter_set[ParameterID::PAD_HEIGHT] = size.y;
+        }
+        else if (pad_type == PadType::SMD_RECT_ROUND) {
+            pad.parameter_set[ParameterID::PAD_WIDTH] = size.x;
+            pad.parameter_set[ParameterID::PAD_HEIGHT] = size.y;
+            pad.parameter_set[ParameterID::CORNER_RADIUS] = std::min(size.x, size.y) * roundrect_rratio;
+        }
+        else if (pad_type == PadType::SMD_CIRC) {
+            pad.parameter_set[ParameterID::PAD_DIAMETER] = size.x;
         }
         else if (pad_type == PadType::TH_CIRC) {
             pad.parameter_set[ParameterID::PAD_DIAMETER] = size.x;

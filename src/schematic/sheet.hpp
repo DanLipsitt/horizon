@@ -15,6 +15,7 @@
 #include "util/warning.hpp"
 #include "common/layer_provider.hpp"
 #include "frame/frame.hpp"
+#include "common/picture.hpp"
 #include <vector>
 #include <map>
 #include <fstream>
@@ -53,12 +54,14 @@ public:
     std::map<UUID, BusRipper> bus_rippers;
     std::map<UUID, Line> lines;
     std::map<UUID, Arc> arcs;
+    std::map<UUID, Picture> pictures;
     std::map<std::string, std::string> title_block_values;
     std::vector<Warning> warnings;
 
     LineNet *split_line_net(LineNet *it, Junction *ju);
     void merge_net_lines(LineNet *a, LineNet *b, Junction *ju);
     void expand_symbols(const class Schematic &sch);
+    void expand_symbol(const UUID &sym_uuid, const Schematic &sch);
     void simplify_net_lines(bool simplify);
     void fix_junctions();
     void delete_duplicate_net_lines();
@@ -84,5 +87,8 @@ public:
     Frame frame;
 
     json serialize() const;
+
+private:
+    void expand_symbol_without_net_lines(const UUID &sym_uuid, const Schematic &sch);
 };
 } // namespace horizon

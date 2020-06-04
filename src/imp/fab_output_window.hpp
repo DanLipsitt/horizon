@@ -12,15 +12,16 @@ class FabOutputWindow : public Gtk::Window, public Changeable {
     friend class GerberLayerEditor;
 
 public:
-    FabOutputWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder> &x, class CoreBoard *c,
+    FabOutputWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder> &x, class IDocumentBoard *c,
                     const std::string &project_dir);
-    static FabOutputWindow *create(Gtk::Window *p, class CoreBoard *c, const std::string &project_dir);
+    static FabOutputWindow *create(Gtk::Window *p, class IDocumentBoard *c, const std::string &project_dir);
 
     void set_can_generate(bool v);
     void reload_layers();
+    void generate();
 
 private:
-    class CoreBoard *core;
+    class IDocumentBoard *core;
     class Board *brd;
     class FabOutputSettings *settings;
     Gtk::ListBox *gerber_layers_box = nullptr;
@@ -36,6 +37,8 @@ private:
     Gtk::ComboBoxText *drill_mode_combo = nullptr;
     Gtk::TextView *log_textview = nullptr;
     Gtk::Switch *zip_output_switch = nullptr;
+    bool can_export = true;
+    void update_export_button();
 
     ExportFileChooser export_filechooser;
 
@@ -43,7 +46,7 @@ private:
 
     WindowStateStore state_store;
 
-    void generate();
     void update_drill_visibility();
+    unsigned int n_layers = 0;
 };
 } // namespace horizon

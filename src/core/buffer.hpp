@@ -9,7 +9,7 @@
 #include "common/polygon.hpp"
 #include "common/shape.hpp"
 #include "common/text.hpp"
-#include "cores.hpp"
+#include "document/documents.hpp"
 #include "nlohmann/json_fwd.hpp"
 #include "package/pad.hpp"
 #include "pool/symbol.hpp"
@@ -20,6 +20,9 @@
 #include "board/track.hpp"
 #include "board/board_hole.hpp"
 #include "common/dimension.hpp"
+#include "board/board_panel.hpp"
+#include "schematic/bus_label.hpp"
+#include "schematic/bus_ripper.hpp"
 #include "util/uuid.hpp"
 #include <map>
 #include <set>
@@ -27,7 +30,7 @@
 namespace horizon {
 class Buffer {
 public:
-    Buffer(class Core *co);
+    Buffer(Documents &cr);
     void clear();
     void load(std::set<SelectableRef> selection);
 
@@ -50,11 +53,15 @@ public:
     std::map<UUID, Track> tracks;
     std::map<UUID, BoardHole> board_holes;
     std::map<UUID, Dimension> dimensions;
+    std::map<UUID, BoardPanel> board_panels;
+    std::map<UUID, Bus> buses;
+    std::map<UUID, BusLabel> bus_labels;
+    std::map<UUID, BusRipper> bus_rippers;
 
     json serialize();
 
 private:
-    Cores core;
+    Documents doc;
     NetClass net_class_dummy;
 };
 } // namespace horizon

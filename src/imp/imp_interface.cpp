@@ -1,7 +1,8 @@
 #include "imp_interface.hpp"
 #include "canvas/canvas_gl.hpp"
 #include "imp.hpp"
-#include "imp_schematic.hpp"
+#include "imp_layer.hpp"
+#include "widgets/layer_box.hpp"
 #include "pool/part.hpp"
 #include "nlohmann/json.hpp"
 
@@ -9,6 +10,7 @@ namespace horizon {
 ImpInterface::ImpInterface(ImpBase *i) : imp(i)
 {
     dialogs.set_parent(imp->main_window);
+    dialogs.set_interface(this);
 }
 
 void ImpInterface::tool_bar_set_tip(const std::string &s)
@@ -24,18 +26,6 @@ void ImpInterface::tool_bar_set_tool_name(const std::string &s)
 void ImpInterface::tool_bar_flash(const std::string &s)
 {
     imp->main_window->tool_bar_flash(s);
-}
-
-UUID ImpInterface::take_part()
-{
-    if (auto imp_sch = dynamic_cast<ImpSchematic *>(imp)) {
-        auto uu = imp_sch->part_from_project_manager;
-        imp_sch->part_from_project_manager = UUID();
-        return uu;
-    }
-    else {
-        return UUID();
-    }
 }
 
 void ImpInterface::part_placed(const UUID &uu)
@@ -87,4 +77,37 @@ void ImpInterface::tool_update_data(std::unique_ptr<ToolData> data)
 {
     imp->tool_update_data(data);
 }
+
+void ImpInterface::set_layer_display(int layer, const class LayerDisplay &ld)
+{
+    if (auto imp_layer = dynamic_cast<ImpLayer *>(imp)) {
+        imp_layer->layer_box->set_layer_display(layer, ld);
+    }
+}
+
+const LayerDisplay &ImpInterface::get_layer_display(int layer) const
+{
+    return imp->canvas->get_layer_display(layer);
+}
+
+void ImpInterface::set_snap_filter(const std::set<SnapFilter> &filter)
+{
+    imp->canvas->snap_filter = filter;
+}
+
+void ImpInterface::set_snap_filter_from_selection(const std::set<SelectableRef> &sel)
+{
+    std::set<SnapFilter> sf;
+    for (const auto &it : sel) {
+        sf.emplace(it.type, it.uuid, it.vertex);
+        if (it.type == ObjectType::BOARD_PACKAGE)
+            sf.emplace(ObjectType::PAD, it.uuid);
+        else if (it.type == ObjectType::SCHEMATIC_SYMBOL)
+            sf.emplace(ObjectType::SYMBOL_PIN, it.uuid);
+        else if (it.type == ObjectType::POLYGON_VERTEX)
+            sf.emplace(ObjectType::POLYGON_EDGE, it.uuid, it.vertex);
+    }
+    imp->canvas->snap_filter = sf;
+}
+
 } // namespace horizon

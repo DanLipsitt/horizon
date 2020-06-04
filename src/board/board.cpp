@@ -4,6 +4,7 @@
 #include "logger/logger.hpp"
 #include "pool/part.hpp"
 #include "util/util.hpp"
+#include "util/picture_load.hpp"
 #include <list>
 #include "nlohmann/json.hpp"
 
@@ -25,7 +26,7 @@ json Board::StackupLayer::serialize() const
     return j;
 }
 
-Board::Colors::Colors() : solder_mask({0, .5, 0}), substrate({.2, .15, 0})
+BoardColors::BoardColors() : solder_mask({0, .5, 0}), substrate({.2, .15, 0})
 {
 }
 
@@ -57,6 +58,7 @@ Board::Board(const UUID &uu, const json &j, Block &iblock, Pool &pool, ViaPadsta
                          Logger::Domain::BOARD);
         }
     }
+    std::set<UUID> texts_skip;
     if (j.count("packages")) {
         const json &o = j["packages"];
         for (auto it = o.cbegin(); it != o.cend(); ++it) {
@@ -67,6 +69,8 @@ Board::Board(const UUID &uu, const json &j, Block &iblock, Pool &pool, ViaPadsta
                              Logger::Domain::BOARD);
             }
             else {
+                auto texts_lost = BoardPackage::peek_texts(it.value());
+                std::copy(texts_lost.begin(), texts_lost.end(), std::inserter(texts_skip, texts_skip.end()));
                 Logger::log_warning("not loading package " + (std::string)u + " since component is gone");
             }
         }
@@ -120,7 +124,8 @@ Board::Board(const UUID &uu, const json &j, Block &iblock, Pool &pool, ViaPadsta
         const json &o = j["texts"];
         for (auto it = o.cbegin(); it != o.cend(); ++it) {
             auto u = UUID(it.key());
-            load_and_log(texts, ObjectType::TEXT, std::forward_as_tuple(u, it.value()), Logger::Domain::BOARD);
+            if (!texts_skip.count(u))
+                load_and_log(texts, ObjectType::TEXT, std::forward_as_tuple(u, it.value()), Logger::Domain::BOARD);
         }
     }
     if (j.count("lines")) {
@@ -168,6 +173,29 @@ Board::Board(const UUID &uu, const json &j, Block &iblock, Pool &pool, ViaPadsta
                          Logger::Domain::BOARD);
         }
     }
+    if (j.count("included_boards")) {
+        const json &o = j["included_boards"];
+        for (auto it = o.cbegin(); it != o.cend(); ++it) {
+            auto u = UUID(it.key());
+            load_and_log(included_boards, ObjectType::BOARD, std::forward_as_tuple(u, it.value()),
+                         Logger::Domain::BOARD);
+        }
+    }
+    if (j.count("board_panels")) {
+        const json &o = j["board_panels"];
+        for (auto it = o.cbegin(); it != o.cend(); ++it) {
+            auto u = UUID(it.key());
+            load_and_log(board_panels, ObjectType::BOARD, std::forward_as_tuple(u, it.value(), *this),
+                         Logger::Domain::BOARD);
+        }
+    }
+    if (j.count("pictures")) {
+        const json &o = j["pictures"];
+        for (auto it = o.cbegin(); it != o.cend(); ++it) {
+            auto u = UUID(it.key());
+            load_and_log(pictures, ObjectType::PICTURE, std::forward_as_tuple(u, it.value()), Logger::Domain::BOARD);
+        }
+    }
     if (j.count("rules")) {
         try {
             rules.load_from_json(j.at("rules"));
@@ -203,6 +231,22 @@ Board::Board(const UUID &uu, const json &j, Block &iblock, Pool &pool, ViaPadsta
             Logger::log_warning("couldn't load pdf export settings", Logger::Domain::BOARD, e.what());
         }
     }
+    if (j.count("step_export_settings")) {
+        try {
+            step_export_settings = STEPExportSettings(j.at("step_export_settings"));
+        }
+        catch (const std::exception &e) {
+            Logger::log_warning("couldn't load step export settings", Logger::Domain::BOARD, e.what());
+        }
+    }
+    if (j.count("pnp_export_settings")) {
+        try {
+            pnp_export_settings = PnPExportSettings(j.at("pnp_export_settings"));
+        }
+        catch (const std::exception &e) {
+            Logger::log_warning("couldn't load p&p export settings", Logger::Domain::BOARD, e.what());
+        }
+    }
     fab_output_settings.update_for_board(this);
     update_pdf_export_settings(pdf_export_settings);
     update_refs(); // fill in smashed texts
@@ -211,7 +255,7 @@ Board::Board(const UUID &uu, const json &j, Block &iblock, Pool &pool, ViaPadsta
 Board Board::new_from_file(const std::string &filename, Block &block, Pool &pool, ViaPadstackProvider &vpp)
 {
     auto j = load_json_from_file(filename);
-    return Board(UUID(j["uuid"].get<std::string>()), j, block, pool, vpp);
+    return Board(UUID(j.at("uuid").get<std::string>()), j, block, pool, vpp);
 }
 
 Board::Board(const UUID &uu, Block &bl) : uuid(uu), block(&bl)
@@ -241,46 +285,38 @@ const std::map<int, Layer> &Board::get_layers() const
     return layers;
 }
 
-Board::Board(const Board &brd)
+Board::Board(const Board &brd, CopyMode copy_mode)
     : layers(brd.layers), uuid(brd.uuid), block(brd.block), name(brd.name), polygons(brd.polygons), holes(brd.holes),
-      packages(brd.packages), junctions(brd.junctions), tracks(brd.tracks), airwires(brd.airwires), vias(brd.vias),
-      texts(brd.texts), lines(brd.lines), arcs(brd.arcs), planes(brd.planes), keepouts(brd.keepouts),
-      dimensions(brd.dimensions), connection_lines(brd.connection_lines), warnings(brd.warnings), rules(brd.rules),
-      fab_output_settings(brd.fab_output_settings), stackup(brd.stackup), colors(brd.colors),
-      pdf_export_settings(brd.pdf_export_settings), n_inner_layers(brd.n_inner_layers)
+      junctions(brd.junctions), tracks(brd.tracks), texts(brd.texts), lines(brd.lines), arcs(brd.arcs),
+      planes(brd.planes), keepouts(brd.keepouts), dimensions(brd.dimensions), connection_lines(brd.connection_lines),
+      included_boards(brd.included_boards), board_panels(brd.board_panels), pictures(brd.pictures),
+      warnings(brd.warnings), rules(brd.rules), fab_output_settings(brd.fab_output_settings), airwires(brd.airwires),
+      stackup(brd.stackup), colors(brd.colors), pdf_export_settings(brd.pdf_export_settings),
+      step_export_settings(brd.step_export_settings), pnp_export_settings(brd.pnp_export_settings),
+      n_inner_layers(brd.n_inner_layers)
 {
+    if (copy_mode == CopyMode::DEEP) {
+        packages = brd.packages;
+        vias = brd.vias;
+    }
+    else {
+        for (const auto &it : brd.packages) {
+            packages.emplace(std::piecewise_construct, std::forward_as_tuple(it.first),
+                             std::forward_as_tuple(shallow_copy, it.second));
+        }
+        for (const auto &it : brd.vias) {
+            vias.emplace(std::piecewise_construct, std::forward_as_tuple(it.first),
+                         std::forward_as_tuple(shallow_copy, it.second));
+        }
+    }
     update_refs();
 }
 
-void Board::operator=(const Board &brd)
+Board::Board(const Board &brd) : Board(brd, CopyMode::DEEP)
 {
-    layers = brd.layers;
-    uuid = brd.uuid;
-    block = brd.block;
-    name = brd.name;
-    n_inner_layers = brd.n_inner_layers;
-    polygons = brd.polygons;
-    holes = brd.holes;
-    packages.clear();
-    packages = brd.packages;
-    junctions = brd.junctions;
-    tracks = brd.tracks;
-    airwires = brd.airwires;
-    vias = brd.vias;
-    texts = brd.texts;
-    lines = brd.lines;
-    arcs = brd.arcs;
-    planes = brd.planes;
-    keepouts = brd.keepouts;
-    dimensions = brd.dimensions;
-    connection_lines = brd.connection_lines;
-    warnings = brd.warnings;
-    rules = brd.rules;
-    fab_output_settings = brd.fab_output_settings;
-    stackup = brd.stackup;
-    colors = brd.colors;
-    pdf_export_settings = brd.pdf_export_settings;
-    update_refs();
+}
+Board::Board(shallow_copy_t sh, const Board &brd) : Board(brd, CopyMode::SHALLOW)
+{
 }
 
 void Board::update_refs()
@@ -298,7 +334,9 @@ void Board::update_refs()
         it.second.update_refs(*this);
     }
     for (auto &it : airwires) {
-        it.second.update_refs(*this);
+        for (auto &it2 : it.second) {
+            it2.update_refs(*this);
+        }
     }
     for (auto &it : vias) {
         it.second.junction.update(junctions);
@@ -333,6 +371,9 @@ void Board::update_refs()
     for (auto &it : connection_lines) {
         it.second.update_refs(*this);
     }
+    for (auto &it : board_panels) {
+        it.second.included_board.update(included_boards);
+    }
 }
 
 unsigned int Board::get_n_inner_layers() const
@@ -345,6 +386,7 @@ void Board::set_n_inner_layers(unsigned int n)
     n_inner_layers = n;
     layers.clear();
     layers = {{200, {200, "Top Notes"}},
+              {BoardLayers::OUTLINE_NOTES, {BoardLayers::OUTLINE_NOTES, "Outline Notes"}},
               {100, {100, "Outline"}},
               {60, {60, "Top Courtyard"}},
               {50, {50, "Top Assembly"}},
@@ -390,6 +432,7 @@ void Board::update_pdf_export_settings(PDFExportSettings &settings)
                 std::forward_as_tuple(l, Color(0, 0, 0), PDFExportSettings::Layer::Mode::OUTLINE, enable));
     };
 
+    add_layer(BoardLayers::OUTLINE_NOTES);
     add_layer(BoardLayers::L_OUTLINE);
     add_layer(BoardLayers::TOP_PASTE, false);
     add_layer(BoardLayers::TOP_SILKSCREEN, false);
@@ -413,7 +456,9 @@ void Board::update_pdf_export_settings(PDFExportSettings &settings)
 
 void Board::flip_package_layer(int &layer) const
 {
-    if (layer < 0 && layer > -100) {
+    if (layer == BoardLayers::L_OUTLINE)
+        return;
+    else if (layer < 0 && layer > -100) {
         if (n_inner_layers == 0)
             return;
         if (-layer > (int)n_inner_layers)
@@ -506,13 +551,30 @@ void Board::vacuum_junctions()
     }
 }
 
+
+static std::string replace_text_map(const std::string &s, const std::map<std::string, std::string> &m)
+{
+    auto fn = [m](const auto &k) -> std::string {
+        if (m.count(k))
+            return m.at(k);
+        else
+            return "";
+    };
+    return replace_placeholders(s, fn, true);
+}
+
 void Board::expand(bool careful)
 {
     delete_dependants();
     warnings.clear();
 
+    for (auto &it : texts) {
+        it.second.overridden = false;
+    }
+
+    expand_packages();
+
     for (auto &it : junctions) {
-        it.second.temp = false;
         it.second.layer = 10000;
         it.second.has_via = false;
         it.second.needs_via = false;
@@ -594,8 +656,6 @@ void Board::expand(bool careful)
     vacuum_junctions();
     delete_dependants(); // deletes connection lines
 
-    expand_packages();
-
     for (auto &it : polygons) {
         it.second.usage = nullptr;
     }
@@ -616,6 +676,15 @@ void Board::expand(bool careful)
         }
         else if (it.second.junction->net && it.second.net_set && (it.second.junction->net != it.second.net_set)) {
             warnings.emplace_back(it.second.junction->position, "Via net mismatch");
+        }
+    }
+
+    for (auto &it : texts) {
+        if (it.second.overridden == false) {
+            if (std::count(it.second.text.begin(), it.second.text.end(), '$')) {
+                it.second.overridden = true;
+                it.second.text_override = replace_text_map(it.second.text, block->project_meta);
+            }
         }
     }
 
@@ -646,12 +715,15 @@ void Board::expand_packages()
             if (it.second.alternate_package) {
                 std::set<std::string> pads_from_primary, pads_from_alt;
                 for (const auto &it_pad : it.second.pool_package->pads) {
-                    pads_from_primary.insert(it_pad.second.name);
+                    if (it_pad.second.padstack.type != Padstack::Type::MECHANICAL)
+                        pads_from_primary.insert(it_pad.second.name);
                 }
                 bool alt_valid = true;
                 for (const auto &it_pad : it.second.alternate_package->pads) {
-                    if (!pads_from_alt.insert(it_pad.second.name).second) { // duplicate pad name
-                        alt_valid = false;
+                    if (it_pad.second.padstack.type != Padstack::Type::MECHANICAL) {
+                        if (!pads_from_alt.insert(it_pad.second.name).second) { // duplicate pad name
+                            alt_valid = false;
+                        }
                     }
                 }
                 if (!alt_valid || pads_from_alt != pads_from_primary) { // alt pkg isn't pad-equal
@@ -660,15 +732,21 @@ void Board::expand_packages()
                 }
                 else {
                     it.second.package = *it.second.alternate_package;
-                    it.second.package.pads.clear(); // need to adjust pad uuids to primary package
+
+                    // need to adjust pad uuids to primary package
+                    map_erase_if(it.second.package.pads,
+                                 [](const auto &x) { return x.second.padstack.type != Padstack::Type::MECHANICAL; });
                     std::map<std::string, UUID> pad_uuids;
                     for (const auto &it_pad : it.second.pool_package->pads) {
-                        assert(pad_uuids.emplace(it_pad.second.name, it_pad.first).second); // no duplicates
+                        if (it_pad.second.padstack.type != Padstack::Type::MECHANICAL)
+                            assert(pad_uuids.emplace(it_pad.second.name, it_pad.first).second); // no duplicates
                     }
                     for (const auto &it_pad : it.second.alternate_package->pads) {
-                        auto uu = pad_uuids.at(it_pad.second.name);
-                        auto &pad = it.second.package.pads.emplace(uu, it_pad.second).first->second;
-                        pad.uuid = uu;
+                        if (it_pad.second.padstack.type != Padstack::Type::MECHANICAL) {
+                            auto uu = pad_uuids.at(it_pad.second.name);
+                            auto &pad = it.second.package.pads.emplace(uu, it_pad.second).first->second;
+                            pad.uuid = uu;
+                        }
                     }
                 }
             }
@@ -730,19 +808,34 @@ void Board::expand_packages()
     // assign nets to pads based on netlist
     for (auto &it : packages) {
         for (auto &it_pad : it.second.package.pads) {
+            it_pad.second.is_nc = false;
             if (it.second.component->part->pad_map.count(it_pad.first)) {
                 const auto &pad_map_item = it.second.component->part->pad_map.at(it_pad.first);
                 auto pin_path = UUIDPath<2>(pad_map_item.gate->uuid, pad_map_item.pin->uuid);
                 if (it.second.component->connections.count(pin_path)) {
                     const auto &conn = it.second.component->connections.at(pin_path);
                     it_pad.second.net = conn.net;
+                    if (conn.net) {
+                        it_pad.second.secondary_text = conn.net->name;
+                    }
+                    else {
+                        it_pad.second.secondary_text = "NC";
+                        it_pad.second.is_nc = true;
+                    }
                 }
                 else {
                     it_pad.second.net = nullptr;
+                    it_pad.second.secondary_text = "("
+                                                   + it.second.component->part->entity->gates.at(pin_path.at(0))
+                                                             .unit->pins.at(pin_path.at(1))
+                                                             .primary_name
+                                                   + ")";
                 }
             }
             else {
                 it_pad.second.net = nullptr;
+                it_pad.second.secondary_text = "NC";
+                it_pad.second.is_nc = true;
             }
         }
     }
@@ -779,13 +872,23 @@ void Board::smash_package(BoardPackage *pkg)
     if (pkg->smashed)
         return;
     pkg->smashed = true;
-    for (const auto &it : pkg->pool_package->texts) {
-        if (it.second.layer == 20 || it.second.layer == 120) { // top or bottom silkscreen
+    const Package *ppkg;
+
+    if (pkg->alternate_package)
+        ppkg = pkg->alternate_package;
+    else
+        ppkg = pkg->pool_package;
+
+    for (const auto &it : ppkg->texts) {
+        if (BoardLayers::is_silkscreen(it.second.layer)) { // top or bottom silkscreen
             auto uu = UUID::random();
             auto &x = texts.emplace(uu, uu).first->second;
             x.from_smash = true;
             x.overridden = true;
             x.placement = pkg->placement;
+            if (x.placement.mirror) {
+                x.placement.invert_angle();
+            }
             x.placement.accumulate(it.second.placement);
             x.text = it.second.text;
             x.layer = it.second.layer;
@@ -797,6 +900,146 @@ void Board::smash_package(BoardPackage *pkg)
             pkg->texts.push_back(&x);
         }
     }
+}
+
+void Board::copy_package_silkscreen_texts(BoardPackage *dest, const BoardPackage *src)
+{
+    // Copy smash status
+    unsmash_package(dest);
+    if (!src->smashed) {
+        return;
+    }
+    dest->smashed = true;
+
+    // Copy all texts from src
+    for (const auto &it : src->texts) {
+        if (!BoardLayers::is_silkscreen(it->layer)) {
+            // Not on top or bottom silkscreen
+            continue;
+        }
+
+        auto uu = UUID::random();
+        auto &x = texts.emplace(uu, uu).first->second;
+        x.from_smash = true;
+        x.overridden = true;
+
+        x.placement = dest->placement;
+        Placement rp = it->placement;
+        Placement ref_placement = src->placement;
+        if (ref_placement.mirror) {
+            ref_placement.invert_angle();
+        }
+        rp.make_relative(ref_placement);
+        if (x.placement.mirror) {
+            x.placement.invert_angle();
+        }
+        x.placement.accumulate(rp);
+
+        x.text = it->text;
+        x.layer = it->layer;
+        if (src->flip != dest->flip) {
+            flip_package_layer(x.layer);
+        }
+
+        x.size = it->size;
+        x.width = it->width;
+        dest->texts.push_back(&x);
+    }
+}
+
+void Board::smash_package_silkscreen_graphics(BoardPackage *pkg)
+{
+    if (pkg->omit_silkscreen)
+        return;
+
+    std::map<Junction *, Junction *> junction_xlat;
+    auto tr = pkg->placement;
+    if (pkg->flip)
+        tr.invert_angle();
+    auto get_junction = [&junction_xlat, this, pkg, tr](Junction *ju) {
+        if (junction_xlat.count(ju)) {
+            return junction_xlat.at(ju);
+        }
+        else {
+            auto uu = UUID::random();
+            auto &new_junction = junctions.emplace(uu, uu).first->second;
+            new_junction.position = tr.transform(ju->position);
+            junction_xlat.emplace(ju, &new_junction);
+            return &new_junction;
+        }
+    };
+
+    for (const auto &it : pkg->package.lines) {
+        if (BoardLayers::is_silkscreen(it.second.layer)) {
+            auto uu = UUID::random();
+            auto &new_line = lines.emplace(uu, uu).first->second;
+            new_line.from = get_junction(it.second.from);
+            new_line.to = get_junction(it.second.to);
+            new_line.width = it.second.width;
+            new_line.layer = it.second.layer;
+        }
+    }
+    for (const auto &it : pkg->package.arcs) {
+        if (BoardLayers::is_silkscreen(it.second.layer)) {
+            auto uu = UUID::random();
+            auto &new_arc = arcs.emplace(uu, uu).first->second;
+            new_arc.from = get_junction(it.second.from);
+            new_arc.to = get_junction(it.second.to);
+            new_arc.center = get_junction(it.second.center);
+            new_arc.width = it.second.width;
+            new_arc.layer = it.second.layer;
+        }
+    }
+    pkg->omit_silkscreen = true;
+}
+
+void Board::smash_panel_outline(BoardPanel &panel)
+{
+    if (panel.omit_outline)
+        return;
+
+    for (const auto &it : panel.included_board->board->polygons) {
+        if (it.second.layer == BoardLayers::L_OUTLINE) {
+            auto uu = UUID::random();
+            auto &new_poly = polygons.emplace(uu, uu).first->second;
+            new_poly.layer = BoardLayers::L_OUTLINE;
+            for (const auto &it_v : it.second.vertices) {
+                new_poly.vertices.emplace_back();
+                auto &v = new_poly.vertices.back();
+                v.arc_center = panel.placement.transform(it_v.arc_center);
+                v.arc_reverse = it_v.arc_reverse;
+                v.type = it_v.type;
+                v.position = panel.placement.transform(it_v.position);
+            }
+        }
+    }
+    panel.omit_outline = true;
+}
+
+void Board::smash_package_outline(BoardPackage &pkg)
+{
+    if (pkg.omit_outline)
+        return;
+    auto tr = pkg.placement;
+    if (pkg.flip)
+        tr.invert_angle();
+
+    for (const auto &it : pkg.package.polygons) {
+        if (it.second.layer == BoardLayers::L_OUTLINE) {
+            auto uu = UUID::random();
+            auto &new_poly = polygons.emplace(uu, uu).first->second;
+            new_poly.layer = BoardLayers::L_OUTLINE;
+            for (const auto &it_v : it.second.vertices) {
+                new_poly.vertices.emplace_back();
+                auto &v = new_poly.vertices.back();
+                v.arc_center = tr.transform(it_v.arc_center);
+                v.arc_reverse = it_v.arc_reverse;
+                v.type = it_v.type;
+                v.position = tr.transform(it_v.position);
+            }
+        }
+    }
+    pkg.omit_outline = true;
 }
 
 void Board::unsmash_package(BoardPackage *pkg)
@@ -839,6 +1082,9 @@ std::vector<KeepoutContour> Board::get_keepout_contours() const
         }
     }
     for (const auto &it_pkg : packages) {
+        Placement tr = it_pkg.second.placement;
+        if (it_pkg.second.flip)
+            tr.invert_angle();
         for (const auto &it : it_pkg.second.package.keepouts) {
             r.emplace_back();
             ClipperLib::Path &contour = r.back().contour;
@@ -847,7 +1093,7 @@ std::vector<KeepoutContour> Board::get_keepout_contours() const
             auto poly2 = it.second.polygon->remove_arcs();
             contour.reserve(poly2.vertices.size());
             for (const auto &itv : poly2.vertices) {
-                auto p = it_pkg.second.placement.transform(itv.position);
+                auto p = tr.transform(itv.position);
                 contour.push_back({p.x, p.y});
             }
         }
@@ -872,6 +1118,30 @@ std::pair<Coordi, Coordi> Board::get_bbox() const
     return {a, b};
 }
 
+std::map<const BoardPackage *, PnPRow> Board::get_PnP(const PnPExportSettings &settings) const
+{
+    std::map<const BoardPackage *, PnPRow> r;
+    for (const auto &it : packages) {
+        if (it.second.component->nopopulate && !settings.include_nopopulate) {
+            continue;
+        }
+
+        PnPRow row;
+        row.refdes = it.second.component->refdes;
+        row.package = it.second.package.name;
+        row.MPN = it.second.component->part->get_MPN();
+        row.value = it.second.component->part->get_value();
+        row.manufacturer = it.second.component->part->get_manufacturer();
+        row.side = it.second.flip ? PnPRow::Side::BOTTOM : PnPRow::Side::TOP;
+        row.placement = it.second.placement;
+        if (it.second.flip)
+            row.placement.inc_angle_deg(180);
+        row.placement.mirror = false;
+        r.emplace(&it.second, row);
+    }
+    return r;
+}
+
 json Board::serialize() const
 {
     json j;
@@ -889,6 +1159,8 @@ json Board::serialize() const
         j["colors"] = o;
     }
     j["pdf_export_settings"] = pdf_export_settings.serialize_board();
+    j["step_export_settings"] = step_export_settings.serialize();
+    j["pnp_export_settings"] = pnp_export_settings.serialize();
     j["polygons"] = json::object();
     for (const auto &it : polygons) {
         j["polygons"][(std::string)it.first] = it.second.serialize();
@@ -945,6 +1217,35 @@ json Board::serialize() const
     for (const auto &it : connection_lines) {
         j["connection_lines"][(std::string)it.first] = it.second.serialize();
     }
+    if (included_boards.size()) {
+        j["included_boards"] = json::object();
+        for (const auto &it : included_boards) {
+            j["included_boards"][(std::string)it.first] = it.second.serialize();
+        }
+    }
+    if (board_panels.size()) {
+        j["board_panels"] = json::object();
+        for (const auto &it : board_panels) {
+            j["board_panels"][(std::string)it.first] = it.second.serialize();
+        }
+    }
+    if (pictures.size()) {
+        j["pictures"] = json::object();
+        for (const auto &it : pictures) {
+            j["pictures"][(std::string)it.first] = it.second.serialize();
+        }
+    }
     return j;
 }
+
+void Board::save_pictures(const std::string &dir) const
+{
+    pictures_save({&pictures}, dir, "brd");
+}
+
+void Board::load_pictures(const std::string &dir)
+{
+    pictures_load({&pictures}, dir, "brd");
+}
+
 } // namespace horizon

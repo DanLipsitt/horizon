@@ -6,10 +6,9 @@
 #include "widgets/pool_browser_part.hpp"
 #include "widgets/pool_browser_symbol.hpp"
 #include "widgets/pool_browser_padstack.hpp"
-#include "symbol_pin_names.hpp"
+#include "symbol_pin_names_window.hpp"
 #include "select_net.hpp"
 #include "ask_net_merge.hpp"
-#include "ask_delete_component.hpp"
 #include "manage_buses.hpp"
 #include "manage_net_classes.hpp"
 #include "manage_power_nets.hpp"
@@ -18,13 +17,8 @@
 #include "ask_datum_angle.hpp"
 #include "select_via_padstack.hpp"
 #include "annotate.hpp"
-#include "core/core.hpp"
-#include "core/core_schematic.hpp"
-#include "core/cores.hpp"
 #include "pool/part.hpp"
 #include "edit_shape.hpp"
-#include "edit_parameter_program.hpp"
-#include "edit_parameter_set.hpp"
 #include "edit_pad_parameter_set.hpp"
 #include "schematic_properties.hpp"
 #include "edit_via.hpp"
@@ -36,12 +30,22 @@
 #include "select_group_tag.hpp"
 #include "widgets/spin_button_dim.hpp"
 #include "widgets/spin_button_angle.hpp"
+#include "renumber_pads_window.hpp"
+#include "generate_silkscreen_window.hpp"
+#include "select_included_board.hpp"
+#include "manage_included_boards.hpp"
+#include "enter_datum_window.hpp"
 #include <glibmm.h>
 
 namespace horizon {
 void Dialogs::set_parent(Gtk::Window *w)
 {
     parent = w;
+}
+
+void Dialogs::set_interface(ImpInterface *intf)
+{
+    interface = intf;
 }
 
 std::pair<bool, UUID> Dialogs::map_pin(const std::vector<std::pair<const Pin *, bool>> &pins)
@@ -193,10 +197,16 @@ std::pair<bool, UUID> Dialogs::select_group_tag(const class Block *block, bool t
     }
 }
 
-bool Dialogs::edit_symbol_pin_names(SchematicSymbol *sym)
+std::pair<bool, UUID> Dialogs::select_included_board(const Board &brd)
 {
-    SymbolPinNamesDialog dia(parent, sym);
-    return dia.run() == Gtk::RESPONSE_OK;
+    SelectIncludedBoardDialog dia(parent, brd);
+    auto r = dia.run();
+    if (r == Gtk::RESPONSE_OK) {
+        return {dia.valid, dia.selected_uuid};
+    }
+    else {
+        return {false, UUID()};
+    }
 }
 
 bool Dialogs::edit_shapes(std::set<Shape *> shapes)
@@ -205,9 +215,9 @@ bool Dialogs::edit_shapes(std::set<Shape *> shapes)
     return dia.run() == Gtk::RESPONSE_OK;
 }
 
-bool Dialogs::edit_via(class Via *via, class ViaPadstackProvider &vpp)
+bool Dialogs::edit_via(std::set<class Via *> &vias, class ViaPadstackProvider &vpp)
 {
-    EditViaDialog dia(parent, via, vpp);
+    EditViaDialog dia(parent, vias, vpp);
     return dia.run() == Gtk::RESPONSE_OK;
 }
 
@@ -215,12 +225,6 @@ unsigned int Dialogs::ask_net_merge(Net *net, Net *into)
 {
     AskNetMergeDialog dia(parent, net, into);
     return dia.run();
-}
-
-bool Dialogs::ask_delete_component(Component *comp)
-{
-    AskDeleteComponentDialog dia(parent, comp);
-    return dia.run() == Gtk::RESPONSE_OK;
 }
 
 bool Dialogs::manage_buses(Block *b)
@@ -241,30 +245,15 @@ bool Dialogs::manage_power_nets(Block *b)
     return dia.run() == Gtk::RESPONSE_OK;
 }
 
+bool Dialogs::manage_included_boards(Board &b)
+{
+    ManageIncludedBoardsDialog dia(parent, b);
+    return dia.run() == Gtk::RESPONSE_OK;
+}
+
 bool Dialogs::annotate(Schematic *s)
 {
     AnnotateDialog dia(parent, s);
-    return dia.run() == Gtk::RESPONSE_OK;
-}
-
-bool Dialogs::edit_parameter_program(class ParameterProgram *pgm)
-{
-    ParameterProgramDialog dia(parent, pgm);
-    while (true) {
-        auto r = dia.run();
-        if (r != Gtk::RESPONSE_OK)
-            return false;
-        else {
-            if (dia.valid)
-                return true;
-        }
-    }
-    return dia.run() == Gtk::RESPONSE_OK;
-}
-
-bool Dialogs::edit_parameter_set(ParameterSet *pset)
-{
-    ParameterSetDialog dia(parent, pset);
     return dia.run() == Gtk::RESPONSE_OK;
 }
 
@@ -308,12 +297,24 @@ std::pair<bool, int64_t> Dialogs::ask_datum(const std::string &label, int64_t de
 
 std::pair<bool, std::string> Dialogs::ask_datum_string(const std::string &label, const std::string &def)
 {
-    AskDatumStringDialog dia(parent, label);
-    dia.entry->set_text(Glib::strescape(def));
-    dia.entry->select_region(0, -1);
+    AskDatumStringDialog dia(parent, label, false);
+    dia.set_text(def);
     auto r = dia.run();
     if (r == Gtk::RESPONSE_OK) {
-        return {true, Glib::strcompress(dia.entry->get_text())};
+        return {true, dia.get_text()};
+    }
+    else {
+        return {false, ""};
+    }
+}
+
+std::pair<bool, std::string> Dialogs::ask_datum_string_multiline(const std::string &label, const std::string &def)
+{
+    AskDatumStringDialog dia(parent, label, true);
+    dia.set_text(def);
+    auto r = dia.run();
+    if (r == Gtk::RESPONSE_OK) {
+        return {true, dia.get_text()};
     }
     else {
         return {false, ""};
@@ -418,15 +419,15 @@ bool Dialogs::edit_plane(class Plane *plane, class Board *brd, class Block *bloc
     return dia.run() == Gtk::RESPONSE_OK;
 }
 
-bool Dialogs::edit_keepout(class Keepout *keepout, class Core *c, bool add_mode)
+bool Dialogs::edit_keepout(class Keepout *keepout, class IDocument *c, bool add_mode)
 {
     EditKeepoutDialog dia(parent, keepout, c, add_mode);
     return dia.run() == Gtk::RESPONSE_OK;
 }
 
-bool Dialogs::edit_stackup(class CoreBoard *core)
+bool Dialogs::edit_stackup(class IDocumentBoard *doc)
 {
-    EditStackupDialog dia(parent, core);
+    EditStackupDialog dia(parent, doc);
     return dia.run() == Gtk::RESPONSE_OK;
 }
 
@@ -466,4 +467,79 @@ std::pair<bool, std::string> Dialogs::ask_kicad_package_filename()
         return {false, ""};
     }
 }
+
+std::optional<std::string> Dialogs::ask_picture_filename()
+{
+    GtkFileChooserNative *native = gtk_file_chooser_native_new("Import Picture", GTK_WINDOW(parent->gobj()),
+                                                               GTK_FILE_CHOOSER_ACTION_OPEN, "_Open", "_Cancel");
+    auto chooser = Glib::wrap(GTK_FILE_CHOOSER(native));
+    auto filter = Gtk::FileFilter::create();
+    filter->set_name("Supported image formats");
+    filter->add_pixbuf_formats();
+    chooser->add_filter(filter);
+
+    if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(native)) == GTK_RESPONSE_ACCEPT) {
+        return chooser->get_filename();
+    }
+    else {
+        return std::nullopt;
+    }
+}
+
+class SymbolPinNamesWindow *Dialogs::show_symbol_pin_names_window(class SchematicSymbol *symbol)
+{
+    if (window_nonmodal)
+        return nullptr;
+    auto win = new SymbolPinNamesWindow(parent, interface, symbol);
+    window_nonmodal = win;
+    win->present();
+    return win;
+}
+
+class RenumberPadsWindow *Dialogs::show_renumber_pads_window(class Package *pkg, const std::set<UUID> &pads)
+{
+    if (window_nonmodal)
+        return nullptr;
+    auto win = new RenumberPadsWindow(parent, interface, pkg, pads);
+    window_nonmodal = win;
+    win->present();
+    return win;
+}
+
+class GenerateSilkscreenWindow *Dialogs::show_generate_silkscreen_window(class ToolSettings *settings)
+{
+    if (window_nonmodal)
+        return nullptr;
+    auto win = new GenerateSilkscreenWindow(parent, interface, settings);
+    window_nonmodal = win;
+    win->present();
+    return win;
+}
+
+EnterDatumWindow *Dialogs::show_enter_datum_window(const std::string &label, int64_t def)
+{
+    if (window_nonmodal) {
+        if (auto win = dynamic_cast<EnterDatumWindow *>(window_nonmodal)) {
+            win->present();
+            return win;
+        }
+    }
+    auto win = new EnterDatumWindow(parent, interface, label, def);
+    window_nonmodal = win;
+    win->signal_hide().connect([this] { close_nonmodal(); });
+    win->present();
+    return win;
+}
+
+void Dialogs::close_nonmodal()
+{
+    delete window_nonmodal;
+    window_nonmodal = nullptr;
+}
+
+ToolWindow *Dialogs::get_nonmodal()
+{
+    return window_nonmodal;
+}
+
 } // namespace horizon

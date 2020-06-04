@@ -87,12 +87,17 @@ PropertyPanel::PropertyPanel(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Bu
             e = new PropertyEditorExpand(type, property, this);
             break;
 
+        case ObjectProperty::Type::OPACITY:
+            e = new PropertyEditorOpacity(type, property, this);
+            break;
+
         default:
             e = new PropertyEditor(type, property, this);
         }
 
         e->signal_changed().connect(
                 [this, property, e] { handle_changed(property, e->get_value(), e->get_apply_all()); });
+        e->signal_activate().connect([this] { parent->s_signal_activate.emit(); });
         e->signal_apply_all().connect([this, property, e] {
             if (e->get_apply_all()) {
                 handle_apply_all(property, e->get_value());
@@ -141,7 +146,7 @@ PropertyPanel *PropertyPanel::create(ObjectType t, Core *c, PropertyPanels *pare
 {
     PropertyPanel *w;
     Glib::RefPtr<Gtk::Builder> x = Gtk::Builder::create();
-    x->add_from_resource("/net/carrotIndustries/horizon/property_panels/property_panel.ui");
+    x->add_from_resource("/org/horizon-eda/horizon/property_panels/property_panel.ui");
     x->get_widget_derived("PropertyPanel", w, t, c);
     w->reference();
     w->parent = parent;

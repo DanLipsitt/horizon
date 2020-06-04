@@ -96,6 +96,48 @@ private:
     std::string text_this;
 };
 
+class OrderableMPNEditor : public Gtk::Box, public Changeable {
+public:
+    OrderableMPNEditor(Part &p, const UUID &uu) : Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0), part(p), uuid(uu)
+    {
+        get_style_context()->add_class("linked");
+        entry = Gtk::manage(new Gtk::Entry);
+        entry->show();
+        entry->set_text(part.orderable_MPNs.at(uuid));
+        entry->signal_changed().connect([this] { s_signal_changed.emit(); });
+        entry_add_sanitizer(entry);
+        pack_start(*entry, true, true, 0);
+
+        auto bu = Gtk::manage(new Gtk::Button());
+        bu->set_image_from_icon_name("list-remove-symbolic");
+        bu->show();
+        pack_start(*bu, false, false, 0);
+        bu->signal_clicked().connect([this] {
+            entry->set_text("");
+            s_signal_changed.emit();
+            delete this;
+        });
+    }
+    std::string get_MPN()
+    {
+        return entry->get_text();
+    }
+    const UUID &get_uuid() const
+    {
+        return uuid;
+    }
+
+    void focus()
+    {
+        entry->grab_focus();
+    }
+
+private:
+    Part &part;
+    UUID uuid;
+    Gtk::Entry *entry = nullptr;
+};
+
 PartEditor::PartEditor(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder> &x, Part *p, Pool *po,
                        PoolParametric *pp)
     : Gtk::Box(cobject), part(p), pool(po), pool_parametric(pp)
@@ -139,9 +181,8 @@ PartEditor::PartEditor(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder>
     x->get_widget("parametric_table_combo", w_parametric_table_combo);
     x->get_widget("copy_parametric_from_base", w_parametric_from_base);
     x->get_widget("orderable_MPNs_label", w_orderable_MPNs_label);
-    x->get_widget("orderable_MPNs_view", w_orderable_MPNs_view);
+    x->get_widget("orderable_MPNs_box", w_orderable_MPNs_box);
     x->get_widget("orderable_MPNs_add_button", w_orderable_MPNs_add_button);
-    x->get_widget("orderable_MPNs_remove_button", w_orderable_MPNs_remove_button);
     w_parametric_from_base->hide();
 
     w_entity_label->set_track_visited_links(false);
@@ -380,8 +421,10 @@ PartEditor::PartEditor(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder>
         }
     }
     update_parametric_editor();
-    w_parametric_table_combo->signal_changed().connect(sigc::mem_fun(*this, &PartEditor::update_parametric_editor));
-
+    w_parametric_table_combo->signal_changed().connect([this] {
+        needs_save = true;
+        update_parametric_editor();
+    });
     w_parametric_from_base->set_sensitive(part->base);
     w_parametric_from_base->signal_clicked().connect([this] {
         if (part->base) {
@@ -389,60 +432,29 @@ PartEditor::PartEditor(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder>
         }
     });
 
-    orderable_MPNs_store = Gtk::ListStore::create(orderable_MPNs_list_columns);
-    orderable_MPNs_store->set_sort_func(orderable_MPNs_list_columns.MPN,
-                                        [this](const Gtk::TreeModel::iterator &ia, const Gtk::TreeModel::iterator &ib) {
-                                            Gtk::TreeModel::Row ra = *ia;
-                                            Gtk::TreeModel::Row rb = *ib;
-                                            Glib::ustring a = ra[orderable_MPNs_list_columns.MPN];
-                                            Glib::ustring b = rb[orderable_MPNs_list_columns.MPN];
-                                            return strcmp_natural(a, b);
-                                        });
-    orderable_MPNs_store->set_sort_column(orderable_MPNs_list_columns.MPN, Gtk::SORT_ASCENDING);
-    w_orderable_MPNs_view->set_model(orderable_MPNs_store);
-
-    {
-        auto cr = Gtk::manage(new Gtk::CellRendererText());
-        auto tvc = Gtk::manage(new Gtk::TreeViewColumn("MPN", *cr));
-        tvc->add_attribute(*cr, "text", orderable_MPNs_list_columns.MPN);
-        cr->property_editable().set_value(true);
-        cr->signal_edited().connect([this](const Glib::ustring &path, const Glib::ustring &new_text) {
-            auto it = orderable_MPNs_store->get_iter(path);
-            if (it) {
-                Gtk::TreeModel::Row row = *it;
-                row[orderable_MPNs_list_columns.MPN] = new_text;
-                needs_save = true;
-                update_orderable_MPNs_label();
-            }
-        });
-        w_orderable_MPNs_view->append_column(*tvc);
-        w_orderable_MPNs_cr = cr;
-    }
     w_orderable_MPNs_add_button->signal_clicked().connect([this] {
-        auto it = orderable_MPNs_store->append();
-        Gtk::TreeModel::Row row = *it;
-        row[orderable_MPNs_list_columns.uuid] = UUID::random();
-        row[orderable_MPNs_list_columns.MPN] = "edit me";
         needs_save = true;
-        update_orderable_MPNs_label();
+        auto uu = UUID::random();
+        part->orderable_MPNs.emplace(uu, "");
+        auto ed = create_orderable_MPN_editor(uu);
+        ed->focus();
     });
-    w_orderable_MPNs_remove_button->signal_clicked().connect([this] {
-        auto it = w_orderable_MPNs_view->get_selection()->get_selected();
-        orderable_MPNs_store->erase(it);
-        needs_save = true;
-        update_orderable_MPNs_label();
-    });
-    w_orderable_MPNs_view->get_selection()->signal_changed().connect([this] {
-        w_orderable_MPNs_remove_button->set_sensitive(w_orderable_MPNs_view->get_selection()->count_selected_rows());
-    });
-    w_orderable_MPNs_remove_button->set_sensitive(w_orderable_MPNs_view->get_selection()->count_selected_rows());
 
     for (const auto &it : part->orderable_MPNs) {
-        Gtk::TreeModel::Row row = *orderable_MPNs_store->append();
-        row[orderable_MPNs_list_columns.uuid] = it.first;
-        row[orderable_MPNs_list_columns.MPN] = it.second;
+        create_orderable_MPN_editor(it.first);
     }
     update_orderable_MPNs_label();
+}
+class OrderableMPNEditor *PartEditor::create_orderable_MPN_editor(const UUID &uu)
+{
+    auto ed = Gtk::manage(new OrderableMPNEditor(*part, uu));
+    w_orderable_MPNs_box->pack_start(*ed, false, false, 0);
+    ed->signal_changed().connect([this] {
+        needs_save = true;
+        update_orderable_MPNs_label();
+    });
+    ed->show();
+    return ed;
 }
 
 void PartEditor::update_map_buttons()
@@ -458,18 +470,22 @@ void PartEditor::update_map_buttons()
                 w_tv_pads->get_selection()->count_selected_rows() && w_tv_pins->get_selection()->count_selected_rows();
         w_button_map->set_sensitive(can_map);
         w_button_unmap->set_sensitive(w_tv_pads->get_selection()->count_selected_rows());
-        w_button_automap->set_sensitive(true);
+        w_button_automap->set_sensitive(w_tv_pads->get_selection()->count_selected_rows());
         w_button_copy_from_other->set_sensitive(true);
     }
     w_button_select_pads->set_sensitive(w_tv_pins->get_selection()->count_selected_rows());
-    w_button_select_pin->set_sensitive(w_tv_pads->get_selection()->count_selected_rows());
+    w_button_select_pin->set_sensitive(w_tv_pads->get_selection()->count_selected_rows() == 1);
 }
 
 void PartEditor::update_orderable_MPNs_label()
 {
     std::string s;
-    for (const auto &it : orderable_MPNs_store->children()) {
-        s += Glib::Markup::escape_text(it.get_value(orderable_MPNs_list_columns.MPN)) + ", ";
+    for (auto ch : w_orderable_MPNs_box->get_children()) {
+        if (auto w = dynamic_cast<OrderableMPNEditor *>(ch)) {
+            auto m = w->get_MPN();
+            if (m.size())
+                s += Glib::Markup::escape_text(m) + ", ";
+        }
     }
     if (s.size()) {
         s.pop_back();
@@ -647,11 +663,16 @@ void PartEditor::save()
     if (parametric_editor) {
         part->parametric = parametric_editor->get_values();
     }
+    else {
+        part->parametric.clear();
+    }
 
     part->orderable_MPNs.clear();
-    for (const auto &it : orderable_MPNs_store->children()) {
-        part->orderable_MPNs.emplace(it.get_value(orderable_MPNs_list_columns.uuid),
-                                     it.get_value(orderable_MPNs_list_columns.MPN));
+
+    for (auto ch : w_orderable_MPNs_box->get_children()) {
+        if (auto w = dynamic_cast<OrderableMPNEditor *>(ch)) {
+            part->orderable_MPNs.emplace(w->get_uuid(), w->get_MPN());
+        }
     }
 
     needs_save = false;
@@ -783,7 +804,7 @@ PartEditor *PartEditor::create(Part *p, Pool *po, PoolParametric *pp)
 {
     PartEditor *w;
     Glib::RefPtr<Gtk::Builder> x = Gtk::Builder::create();
-    x->add_from_resource("/net/carrotIndustries/horizon/pool-prj-mgr/pool-mgr/editors/part_editor.ui");
+    x->add_from_resource("/org/horizon-eda/horizon/pool-prj-mgr/pool-mgr/editors/part_editor.ui");
     x->get_widget_derived("part_editor", w, p, po, pp);
     w->reference();
     return w;

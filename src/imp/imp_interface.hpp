@@ -1,5 +1,7 @@
 #pragma once
 #include "canvas/triangle.hpp"
+#include "canvas/selectables.hpp"
+#include "canvas/snap_filter.hpp"
 #include "dialogs/dialogs.hpp"
 #include "core/tool_data.hpp"
 
@@ -11,10 +13,11 @@ public:
     void tool_bar_set_tip(const std::string &s);
     void tool_bar_set_tool_name(const std::string &s);
     void tool_bar_flash(const std::string &s);
-    UUID take_part();
     void part_placed(const UUID &uu);
     void set_work_layer(int layer);
     int get_work_layer();
+    void set_layer_display(int layer, const class LayerDisplay &ld);
+    const LayerDisplay &get_layer_display(int layer) const;
     void set_no_update(bool v);
     void canvas_update();
     class CanvasGL *get_canvas();
@@ -23,6 +26,9 @@ public:
 
     void update_highlights();
     std::set<ObjectRef> &get_highlights();
+
+    void set_snap_filter(const std::set<SnapFilter> &filter);
+    void set_snap_filter_from_selection(const std::set<SelectableRef> &sel);
 
 private:
     class ImpBase *imp;

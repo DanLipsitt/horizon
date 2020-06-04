@@ -1,17 +1,14 @@
 #include "spin_button_dim.hpp"
 #include "util/util.hpp"
+#include "util/gtk_util.hpp"
 #include <iomanip>
 
 namespace horizon {
 SpinButtonDim::SpinButtonDim() : Gtk::SpinButton()
 {
     set_increments(.1e6, .01e6);
-    set_width_chars(10);
-    auto attributes_list = pango_attr_list_new();
-    auto attribute_font_features = pango_attr_font_features_new("tnum 1");
-    pango_attr_list_insert(attributes_list, attribute_font_features);
-    gtk_entry_set_attributes(GTK_ENTRY(gobj()), attributes_list);
-    pango_attr_list_unref(attributes_list);
+    set_width_chars(11);
+    entry_set_tnum(*this);
 }
 
 bool SpinButtonDim::on_output()
@@ -26,9 +23,16 @@ bool SpinButtonDim::on_output()
             prec = 5;
     }
 
+    double min, max;
+    get_range(min, max);
     std::stringstream stream;
     stream.imbue(get_locale());
-    stream << std::fixed << std::setprecision(prec) << value / 1e6 << " mm";
+    if (value < 0)
+        stream << "−"; // this is U+2212 MINUS SIGN, has same width as +
+    else if (value >= 0 && min < 0)
+        stream << "+";
+
+    stream << std::fixed << std::setprecision(prec) << std::abs(value) / 1e6 << " mm";
 
     set_text(stream.str());
     return true;
@@ -60,6 +64,25 @@ static Operation op_from_char(char c)
     }
 }
 
+static bool op_is_mul(Operation op)
+{
+    switch (op) {
+    case Operation::MUL:
+    case Operation::DIV:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool is_minus(gunichar c)
+{
+    if (c == '-' || c == 0x2212) // U+2212 MINUS SIGN
+        return true;
+    else
+        return false;
+}
+
 
 static int64_t parse_str(const Glib::ustring &s)
 {
@@ -67,14 +90,14 @@ static int64_t parse_str(const Glib::ustring &s)
     int64_t value = 0;
     int64_t mul = 1000000;
     int sign = 1;
-    enum class State { SIGN, INT, DECIMAL, UNIT };
+    enum class State { SIGN, INT, DECIMAL, UNIT, UNIT_M };
     auto state = State::SIGN;
     bool parsed_any = false;
     Operation operation = Operation::INVALID;
     for (const auto c : s) {
         switch (state) {
         case State::SIGN:
-            if (c == '-') {
+            if (is_minus(c)) {
                 sign = -1;
                 state = State::INT;
             }
@@ -108,9 +131,12 @@ static int64_t parse_str(const Glib::ustring &s)
                 value = 0;
                 state = State::SIGN;
             }
-            else if (c == 'i' && operation == Operation::INVALID) {
+            else if (c == 'i' && !op_is_mul(operation)) {
                 value *= 25.4;
                 state = State::UNIT;
+            }
+            else if (c == 'm' && !op_is_mul(operation)) {
+                state = State::UNIT_M;
             }
             break;
 
@@ -128,11 +154,21 @@ static int64_t parse_str(const Glib::ustring &s)
                 value = 0;
                 state = State::SIGN;
             }
-            else if (c == 'i' && operation == Operation::INVALID) {
+            else if (c == 'i' && !op_is_mul(operation)) {
                 value *= 25.4;
                 state = State::UNIT;
             }
+            else if (c == 'm' && !op_is_mul(operation)) {
+                state = State::UNIT_M;
+            }
             break;
+
+        case State::UNIT_M:
+            if (c == 'i') {
+                value *= 25.4 / 1000.0;
+            }
+            state = State::UNIT;
+            /* fall through */
 
         case State::UNIT:
             if (op_from_char(c) != Operation::INVALID && operation == Operation::INVALID) {

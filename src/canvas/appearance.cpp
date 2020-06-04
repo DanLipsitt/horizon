@@ -35,8 +35,10 @@ Appearance::Appearance()
     colors[ColorP::SEARCH_CURRENT] = {1, 0, 1};
     colors[ColorP::SHADOW] = {.3, .3, .3};
     colors[ColorP::CONNECTION_LINE] = {.7, 0, .6};
+    colors[ColorP::NOPOPULATE_X] = {.8, .4, .4};
 
     layer_colors[BoardLayers::TOP_NOTES] = {1, 1, 1};
+    layer_colors[BoardLayers::OUTLINE_NOTES] = {.6, .6, 0};
     layer_colors[BoardLayers::L_OUTLINE] = {.6, .6, 0};
     layer_colors[BoardLayers::TOP_COURTYARD] = {.5, .5, .5};
     layer_colors[BoardLayers::TOP_ASSEMBLY] = {.5, .5, .5};

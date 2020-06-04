@@ -15,6 +15,7 @@
 #include <unordered_map>
 #include <deque>
 #include <list>
+#include "picture.hpp"
 
 namespace horizon {
 class Canvas {
@@ -33,7 +34,8 @@ public:
     void update(const class Padstack &padstack, bool edit = true);
     void update(const class Package &pkg, bool edit = true);
     void update(const class Buffer &buf, class LayerProvider *lp);
-    void update(const class Board &brd);
+    enum class PanelMode { INCLUDE, SKIP };
+    void update(const class Board &brd, PanelMode mode = PanelMode::INCLUDE);
     void update(const class Frame &fr, bool edit = true);
 
     ObjectRef add_line(const std::deque<Coordi> &pts, int64_t width, ColorP color, int layer);
@@ -58,6 +60,8 @@ public:
     bool layer_is_visible(int layer) const;
 
     bool show_all_junctions_in_schematic = false;
+    bool show_text_in_tracks = false;
+    bool show_text_in_vias = false;
     bool fast_draw = false;
 
     virtual bool get_flip_view() const
@@ -67,18 +71,25 @@ public:
 
     std::pair<Coordf, Coordf> get_bbox(bool visible_only = true) const;
 
+    void set_airwire_filter(class IAirwireFilter *f)
+    {
+        airwire_filter = f;
+    }
+
+    static const int first_overlay_layer = 30000;
 
 protected:
-    std::unordered_map<int, std::vector<Triangle>> triangles;
+    std::map<int, std::vector<Triangle>> triangles;
+    std::list<CanvasPicture> pictures;
     void add_triangle(int layer, const Coordf &p0, const Coordf &p1, const Coordf &p2, ColorP co, uint8_t flg = 0);
 
     std::map<ObjectRef, std::map<int, std::pair<size_t, size_t>>> object_refs;
     std::vector<ObjectRef> object_refs_current;
-    void render(const class Symbol &sym, bool on_sheet = false, bool smashed = false);
+    void render(const class Symbol &sym, bool on_sheet = false, bool smashed = false, ColorP co = ColorP::FROM_LAYER);
     void render(const class Junction &junc, bool interactive = true, ObjectType mode = ObjectType::INVALID);
-    void render(const class Line &line, bool interactive = true);
-    void render(const class SymbolPin &pin, bool interactive = true);
-    void render(const class Arc &arc, bool interactive = true);
+    void render(const class Line &line, bool interactive = true, ColorP co = ColorP::FROM_LAYER);
+    void render(const class SymbolPin &pin, bool interactive = true, ColorP co = ColorP::FROM_LAYER);
+    void render(const class Arc &arc, bool interactive = true, ColorP co = ColorP::FROM_LAYER);
     void render(const class Sheet &sheet);
     void render(const class SchematicSymbol &sym);
     void render(const class LineNet &line);
@@ -87,22 +98,29 @@ protected:
     void render(const class Warning &warn);
     void render(const class PowerSymbol &sym);
     void render(const class BusRipper &ripper);
-    void render(const class Text &text, bool interactive = true);
+    void render(const class Text &text, bool interactive = true, ColorP co = ColorP::FROM_LAYER);
     void render(const class Padstack &padstack, bool interactive = true);
-    void render(const class Polygon &polygon, bool interactive = true);
+    void render(const class Polygon &polygon, bool interactive = true, ColorP co = ColorP::FROM_LAYER);
     void render(const class Shape &shape, bool interactive = true);
     void render(const class Hole &hole, bool interactive = true);
-    void render(const class Package &package, bool interactive = true, bool smashed = false);
+    void render(const class Package &package, bool interactive = true, bool smashed = false,
+                bool omit_silkscreen = false, bool omit_outline = false);
+    void render_pad_overlay(const class Pad &pad);
     void render(const class Pad &pad);
     void render(const class Buffer &buf);
-    void render(const class Board &brd);
-    void render(const class BoardPackage &pkg);
-    void render(const class BoardHole &hole);
-    void render(const class Track &track);
-    void render(const class Via &via);
+    enum class OutlineMode { INCLUDE, OMIT };
+    void render(const class Board &brd, bool interactive = true, PanelMode mode = PanelMode::INCLUDE,
+                OutlineMode outline_mode = OutlineMode::INCLUDE);
+    void render(const class BoardPackage &pkg, bool interactive = true);
+    void render(const class BoardHole &hole, bool interactive = true);
+    void render(const class Track &track, bool interactive = true);
+    void render(const class Via &via, bool interactive = true);
     void render(const class Dimension &dim);
     void render(const class Frame &frame, bool on_sheet = false);
     void render(const class ConnectionLine &line);
+    void render(const class Airwire &airwire);
+    void render(const class BoardPanel &panel);
+    void render(const class Picture &pic);
 
     bool needs_push = true;
     virtual void request_push() = 0;
@@ -128,9 +146,22 @@ protected:
                                          bool draw = true, TextData::Font font = TextData::Font::SIMPLEX,
                                          bool center = false, bool mirror = false);
 
+    virtual void draw_bitmap_text(const Coordf &p, float scale, const std::string &rtext, int angle, ColorP color,
+                                  int layer)
+    {
+    }
+
+    virtual std::pair<Coordf, Coordf> measure_bitmap_text(const std::string &text) const
+    {
+        return {{0, 0}, {0, 0}};
+    }
+
     enum class TextBoxMode { FULL, LOWER, UPPER };
-    void draw_text_box(const Placement &q, float width, float height, const std::string &s, ColorP color, int layer,
-                       uint64_t text_width, TextBoxMode mode);
+
+    virtual void draw_bitmap_text_box(const Placement &q, float width, float height, const std::string &s, ColorP color,
+                                      int layer, TextBoxMode mode)
+    {
+    }
 
     void draw_error(const Coordf &center, float scale, const std::string &text, bool tr = true);
     std::tuple<Coordf, Coordf, Coordi> draw_flag(const Coordf &position, const std::string &txt, int64_t size,
@@ -174,7 +205,7 @@ protected:
     std::list<Placement> transforms;
 
     Selectables selectables;
-    std::set<Target> targets;
+    std::vector<Target> targets;
     Target target_current;
 
     const class LayerProvider *layer_provider = nullptr;
@@ -187,13 +218,14 @@ protected:
 
     Triangle::Type triangle_type_current = Triangle::Type::NONE;
 
-    std::map<int, int> overlay_layers;
-    int overlay_layer_current = 30000;
-    int get_overlay_layer(int layer);
+    std::map<std::pair<int, bool>, int> overlay_layers;
+    int overlay_layer_current = first_overlay_layer;
+    int get_overlay_layer(int layer, bool ignore_flip = false);
 
     FragmentCache fragment_cache;
 
 private:
     uint8_t lod_current = 0;
+    class IAirwireFilter *airwire_filter = nullptr;
 };
 } // namespace horizon

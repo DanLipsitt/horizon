@@ -7,6 +7,7 @@
 #include "util/util.hpp"
 #include <thread>
 #include <future>
+#include <sstream>
 
 namespace horizon {
 RulesCheckResult BoardRules::check_track_width(const Board *brd)
@@ -158,7 +159,7 @@ clearance_cu_worker(std::set<std::pair<CanvasPatch::PatchKey, CanvasPatch::Patch
 
             {
                 std::stringstream ss;
-                ss << " Patch pair " << (n_patch_pairs - patch_pairs.size()) << "/" << n_patch_pairs;
+                ss << "Patch pair " << (n_patch_pairs - patch_pairs.size()) << "/" << n_patch_pairs;
                 status_cb(ss.str());
             }
         }
@@ -231,7 +232,7 @@ RulesCheckResult BoardRules::check_clearance_copper(const Board *brd, RulesCheck
     status_cb("Getting patches");
     auto c = dynamic_cast<RulesCheckCacheBoardImage *>(cache.get_cache(RulesCheckCacheID::BOARD_IMAGE));
     std::set<int> layers;
-    const auto &patches = c->get_canvas()->patches;
+    const auto &patches = c->get_canvas()->get_patches();
     for (const auto &it : patches) { // collect copper layers
         if (brd->get_layers().count(it.first.layer) && brd->get_layers().at(it.first.layer).copper) {
             layers.emplace(it.first.layer);
@@ -285,7 +286,7 @@ RulesCheckResult BoardRules::check_clearance_copper_non_copper(const Board *brd,
     RulesCheckResult r;
     r.level = RulesCheckErrorLevel::PASS;
     auto c = dynamic_cast<RulesCheckCacheBoardImage *>(cache.get_cache(RulesCheckCacheID::BOARD_IMAGE));
-    const auto &patches = c->get_canvas()->patches;
+    const auto &patches = c->get_canvas()->get_patches();
     CanvasPatch::PatchKey npth_key;
     npth_key.layer = 10000;
     npth_key.net = UUID();
@@ -477,13 +478,20 @@ RulesCheckResult BoardRules::check_preflight(const Board *brd)
 {
     RulesCheckResult r;
     r.level = RulesCheckErrorLevel::PASS;
+    if (!rule_preflight_checks.enabled) {
+        r.level = RulesCheckErrorLevel::DISABLED;
+        return r;
+    }
 
-    for (const auto &it : brd->airwires) {
-        r.errors.emplace_back(RulesCheckErrorLevel::FAIL);
-        auto &e = r.errors.back();
-        e.has_location = true;
-        e.location = (it.second.from.get_position() + it.second.to.get_position()) / 2;
-        e.comment = "Airwire of net " + (it.second.net ? it.second.net->name : "No net");
+    for (const auto &it_net : brd->airwires) {
+        const auto &net = brd->block->nets.at(it_net.first);
+        for (const auto &it : it_net.second) {
+            r.errors.emplace_back(RulesCheckErrorLevel::FAIL);
+            auto &e = r.errors.back();
+            e.has_location = true;
+            e.location = (it.from.get_position() + it.to.get_position()) / 2;
+            e.comment = "Airwire of net " + net.name;
+        }
     }
     for (const auto &it : brd->planes) {
         if (it.second.fragments.size() == 0) {
@@ -579,7 +587,7 @@ RulesCheckResult BoardRules::check_clearance_copper_keepout(const Board *brd, Ru
     auto rules = dynamic_cast_vector<RuleClearanceCopperKeepout *>(get_rules_sorted(RuleID::CLEARANCE_COPPER_KEEPOUT));
     auto c = dynamic_cast<RulesCheckCacheBoardImage *>(cache.get_cache(RulesCheckCacheID::BOARD_IMAGE));
     std::set<int> layers;
-    const auto &patches = c->get_canvas()->patches;
+    const auto &patches = c->get_canvas()->get_patches();
     for (const auto &it : patches) { // collect copper layers
         if (brd->get_layers().count(it.first.layer) && brd->get_layers().at(it.first.layer).copper) {
             layers.emplace(it.first.layer);

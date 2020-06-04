@@ -36,6 +36,10 @@ public:
     {
         return unit.name;
     }
+    const UUID &get_uuid() const override
+    {
+        return unit.uuid;
+    }
     Unit unit;
 };
 
@@ -55,6 +59,10 @@ public:
     {
         return entity.name;
     }
+    const UUID &get_uuid() const override
+    {
+        return entity.uuid;
+    }
     Entity entity;
 };
 
@@ -72,6 +80,10 @@ public:
     std::string get_name() const override
     {
         return part.get_MPN();
+    }
+    const UUID &get_uuid() const override
+    {
+        return part.uuid;
     }
     Part part;
 };
@@ -197,9 +209,14 @@ void EditorWindow::force_close()
     hide();
 }
 
-bool EditorWindow::get_needs_save()
+bool EditorWindow::get_needs_save() const
 {
     return iface->get_needs_save();
+}
+
+void EditorWindow::set_original_filename(const std::string &s)
+{
+    original_filename = s;
 }
 
 void EditorWindow::save()
@@ -209,6 +226,7 @@ void EditorWindow::save()
             iface->save();
         store->save();
         need_update = true;
+        s_signal_saved.emit(store->filename);
     }
     else {
         GtkFileChooserNative *native = gtk_file_chooser_native_new("Save", GTK_WINDOW(gobj()),
@@ -228,6 +246,8 @@ void EditorWindow::save()
             break;
         default:;
         }
+        if (original_filename.size())
+            chooser->set_current_folder(Glib::path_get_dirname(original_filename));
 
         if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(native)) == GTK_RESPONSE_ACCEPT) {
             if (iface)
@@ -235,6 +255,7 @@ void EditorWindow::save()
             std::string fn = fix_filename(chooser->get_filename());
             s_signal_filename_changed.emit(fn);
             store->save_as(fn);
+            s_signal_saved.emit(store->filename);
             save_button->set_label("Save");
             need_update = true;
         }
@@ -262,9 +283,25 @@ void EditorWindow::reload()
     }
 }
 
-bool EditorWindow::get_need_update()
+bool EditorWindow::get_need_update() const
 {
     return need_update;
+}
+
+ObjectType EditorWindow::get_object_type() const
+{
+    return type;
+}
+
+void EditorWindow::select(const ItemSet &items)
+{
+    if (iface)
+        iface->select(items);
+}
+
+const UUID &EditorWindow::get_uuid() const
+{
+    return store->get_uuid();
 }
 
 } // namespace horizon

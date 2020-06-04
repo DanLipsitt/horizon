@@ -1,13 +1,13 @@
 #include "pdf_export_window.hpp"
 #include "util/util.hpp"
-#include "core/core_schematic.hpp"
-#include "core/core_board.hpp"
+#include "document/idocument_board.hpp"
+#include "document/idocument_schematic.hpp"
 #include "export_pdf/export_pdf.hpp"
 #include "export_pdf/export_pdf_board.hpp"
 #include "util/gtk_util.hpp"
 #include "util/util.hpp"
 #include "widgets/spin_button_dim.hpp"
-#include "core/core.hpp"
+#include "common/layer_provider.hpp"
 #include <podofo/podofo.h>
 #ifdef G_OS_WIN32
 #undef DELETE
@@ -62,7 +62,7 @@ PDFLayerEditor *PDFLayerEditor::create(PDFExportWindow *pa, PDFExportSettings::L
 {
     PDFLayerEditor *w;
     Glib::RefPtr<Gtk::Builder> x = Gtk::Builder::create();
-    x->add_from_resource("/net/carrotIndustries/horizon/imp/pdf_export.ui", "layer_editor");
+    x->add_from_resource("/org/horizon-eda/horizon/imp/pdf_export.ui", "layer_editor");
     x->get_widget_derived("layer_editor", w, pa, la);
     w->reference();
     return w;
@@ -83,42 +83,17 @@ void PDFExportWindow::MyExportFileChooser::prepare_filename(std::string &filenam
     }
 }
 
-PDFExportWindow *PDFExportWindow::create(Gtk::Window *p, Core *c, PDFExportSettings &s, const std::string &pd)
+PDFExportWindow *PDFExportWindow::create(Gtk::Window *p, IDocument *c, PDFExportSettings &s, const std::string &pd)
 {
     PDFExportWindow *w;
     Glib::RefPtr<Gtk::Builder> x = Gtk::Builder::create();
-    x->add_from_resource("/net/carrotIndustries/horizon/imp/pdf_export.ui", "window");
+    x->add_from_resource("/org/horizon-eda/horizon/imp/pdf_export.ui", "window");
     x->get_widget_derived("window", w, c, s, pd);
     w->set_transient_for(*p);
     return w;
 }
 
-static Gtk::Box *make_boolean_ganged_switch(bool &v, const std::string &label_false, const std::string &label_true,
-                                            std::function<void(bool v)> extra_cb = nullptr)
-{
-    auto box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL));
-    box->set_homogeneous(true);
-    box->get_style_context()->add_class("linked");
-    auto b1 = Gtk::manage(new Gtk::RadioButton(label_false));
-    b1->set_mode(false);
-    box->pack_start(*b1, true, true, 0);
-
-    auto b2 = Gtk::manage(new Gtk::RadioButton(label_true));
-    b2->set_mode(false);
-    b2->join_group(*b1);
-    box->pack_start(*b2, true, true, 0);
-
-    b2->set_active(v);
-    b2->signal_toggled().connect([b2, &v, extra_cb] {
-        v = b2->get_active();
-        if (extra_cb)
-            extra_cb(v);
-    });
-    box->show_all();
-    return box;
-}
-
-PDFExportWindow::PDFExportWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder> &x, Core *c,
+PDFExportWindow::PDFExportWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder> &x, IDocument *c,
                                  PDFExportSettings &s, const std::string &pd)
     : Gtk::Window(cobject), core(c), settings(s)
 {
@@ -147,7 +122,7 @@ PDFExportWindow::PDFExportWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk
         grid_attach_label_and_widget(grid, "Min. line width", sp, top);
     }
 
-    if (dynamic_cast<CoreSchematic *>(core)) {
+    if (dynamic_cast<IDocumentSchematic *>(core)) {
         Gtk::ScrolledWindow *sc;
         x->get_widget("layers_sc", sc);
         sc->set_visible(false);
@@ -172,7 +147,10 @@ PDFExportWindow::PDFExportWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk
     export_filechooser.attach(filename_entry, filename_button, this);
     export_filechooser.set_project_dir(pd);
     export_filechooser.bind_filename(settings.output_filename);
-    export_filechooser.signal_changed().connect([this] { s_signal_changed.emit(); });
+    export_filechooser.signal_changed().connect([this] {
+        s_signal_changed.emit();
+        update_export_button();
+    });
 
     status_dispatcher.attach(progress_label);
     status_dispatcher.attach(progress_bar);
@@ -180,16 +158,22 @@ PDFExportWindow::PDFExportWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk
     status_dispatcher.attach(progress_revealer);
     status_dispatcher.signal_notified().connect([this](const StatusDispatcher::Notification &n) {
         is_busy = n.status == StatusDispatcher::Status::BUSY;
-        export_button->set_sensitive(!is_busy);
+        update_export_button();
         header->set_show_close_button(!is_busy);
     });
 
     signal_delete_event().connect([this](GdkEventAny *ev) { return is_busy; });
     reload_layers();
+    update_export_button();
 }
 
 void PDFExportWindow::reload_layers()
 {
+    if (n_layers == settings.layers.size())
+        return;
+    else
+        n_layers = settings.layers.size();
+
     {
         auto children = layers_box->get_children();
         for (auto ch : children)
@@ -223,16 +207,30 @@ void PDFExportWindow::generate()
     thr.detach();
 }
 
+void PDFExportWindow::update_export_button()
+{
+    std::string txt;
+    if (!is_busy) {
+        if (settings.output_filename.size() == 0) {
+            txt = "output filename not set";
+        }
+    }
+    else {
+        txt = "busy";
+    }
+    widget_set_insensitive_tooltip(*export_button, txt);
+}
+
 void PDFExportWindow::export_thread(PDFExportSettings s)
 {
     try {
-        if (auto core_sch = dynamic_cast<CoreSchematic *>(core)) {
+        if (auto core_sch = dynamic_cast<IDocumentSchematic *>(core)) {
             export_pdf(*core_sch->get_schematic(), s, [this](std::string st, double p) {
                 status_dispatcher.set_status(StatusDispatcher::Status::BUSY, st, p);
             });
             status_dispatcher.set_status(StatusDispatcher::Status::DONE, "Done", 1);
         }
-        else if (auto core_brd = dynamic_cast<CoreBoard *>(core)) {
+        else if (auto core_brd = dynamic_cast<IDocumentBoard *>(core)) {
             export_pdf(*core_brd->get_board(), s, [this](std::string st, double p) {
                 status_dispatcher.set_status(StatusDispatcher::Status::BUSY, st, p);
             });

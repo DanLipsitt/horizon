@@ -31,6 +31,9 @@ private:
     const class Board *board;
     class Pool *pool = nullptr;
     Gtk::Box *main_box = nullptr;
+    Gtk::Revealer *model_loading_revealer = nullptr;
+    Gtk::Spinner *model_loading_spinner = nullptr;
+    Gtk::ProgressBar *model_loading_progress = nullptr;
 
     Gtk::ColorButton *background_top_color_button = nullptr;
     Gtk::ColorButton *background_bottom_color_button = nullptr;

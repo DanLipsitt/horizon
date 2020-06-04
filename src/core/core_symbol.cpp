@@ -4,6 +4,8 @@
 #include <fstream>
 #include "nlohmann/json.hpp"
 #include "util/util.hpp"
+#include <giomm/file.h>
+#include <glibmm/fileutils.h>
 
 namespace horizon {
 CoreSymbol::CoreSymbol(const std::string &filename, Pool &pool)
@@ -32,74 +34,74 @@ bool CoreSymbol::has_object_type(ObjectType ty) const
     return false;
 }
 
-std::map<UUID, Text> *CoreSymbol::get_text_map(bool work)
+std::map<UUID, Text> *CoreSymbol::get_text_map()
 {
     return &sym.texts;
 }
 
-std::map<UUID, Polygon> *CoreSymbol::get_polygon_map(bool work)
+std::map<UUID, Polygon> *CoreSymbol::get_polygon_map()
 {
     return &sym.polygons;
 }
 
-Junction *CoreSymbol::get_junction(const UUID &uu, bool work)
+Junction *CoreSymbol::get_junction(const UUID &uu)
 {
     return sym.get_junction(uu);
 }
-Line *CoreSymbol::get_line(const UUID &uu, bool work)
+Line *CoreSymbol::get_line(const UUID &uu)
 {
     return &sym.lines.at(uu);
 }
-SymbolPin *CoreSymbol::get_symbol_pin(const UUID &uu, bool work)
+SymbolPin *CoreSymbol::get_symbol_pin(const UUID &uu)
 {
     return sym.get_symbol_pin(uu);
 }
-Arc *CoreSymbol::get_arc(const UUID &uu, bool work)
+Arc *CoreSymbol::get_arc(const UUID &uu)
 {
     return &sym.arcs.at(uu);
 }
 
-Junction *CoreSymbol::insert_junction(const UUID &uu, bool work)
+Junction *CoreSymbol::insert_junction(const UUID &uu)
 {
     auto x = sym.junctions.emplace(std::make_pair(uu, uu));
     return &(x.first->second);
 }
-void CoreSymbol::delete_junction(const UUID &uu, bool work)
+void CoreSymbol::delete_junction(const UUID &uu)
 {
     sym.junctions.erase(uu);
 }
 
-Line *CoreSymbol::insert_line(const UUID &uu, bool work)
+Line *CoreSymbol::insert_line(const UUID &uu)
 {
     auto x = sym.lines.emplace(std::make_pair(uu, uu));
     return &(x.first->second);
 }
-void CoreSymbol::delete_line(const UUID &uu, bool work)
+void CoreSymbol::delete_line(const UUID &uu)
 {
     sym.lines.erase(uu);
 }
 
-Arc *CoreSymbol::insert_arc(const UUID &uu, bool work)
+Arc *CoreSymbol::insert_arc(const UUID &uu)
 {
     auto x = sym.arcs.emplace(std::make_pair(uu, uu));
     return &(x.first->second);
 }
-void CoreSymbol::delete_arc(const UUID &uu, bool work)
+void CoreSymbol::delete_arc(const UUID &uu)
 {
     sym.arcs.erase(uu);
 }
 
-void CoreSymbol::delete_symbol_pin(const UUID &uu, bool work)
+void CoreSymbol::delete_symbol_pin(const UUID &uu)
 {
     sym.pins.erase(uu);
 }
-SymbolPin *CoreSymbol::insert_symbol_pin(const UUID &uu, bool work)
+SymbolPin *CoreSymbol::insert_symbol_pin(const UUID &uu)
 {
     auto x = sym.pins.emplace(std::make_pair(uu, uu));
     return &(x.first->second);
 }
 
-std::vector<Line *> CoreSymbol::get_lines(bool work)
+std::vector<Line *> CoreSymbol::get_lines()
 {
     std::vector<Line *> r;
     for (auto &it : sym.lines) {
@@ -108,7 +110,7 @@ std::vector<Line *> CoreSymbol::get_lines(bool work)
     return r;
 }
 
-std::vector<Arc *> CoreSymbol::get_arcs(bool work)
+std::vector<Arc *> CoreSymbol::get_arcs()
 {
     std::vector<Arc *> r;
     for (auto &it : sym.arcs) {
@@ -117,7 +119,7 @@ std::vector<Arc *> CoreSymbol::get_arcs(bool work)
     return r;
 }
 
-std::vector<const Pin *> CoreSymbol::get_pins(bool work)
+std::vector<const Pin *> CoreSymbol::get_pins()
 {
     std::vector<const Pin *> r;
     for (auto &it : sym.unit->pins) {
@@ -255,7 +257,7 @@ std::string CoreSymbol::get_display_name(ObjectType type, const UUID &uu)
 
 void CoreSymbol::rebuild(bool from_undo)
 {
-    sym.expand();
+    sym.expand(pin_display_mode);
     Core::rebuild(from_undo);
 }
 
@@ -268,6 +270,7 @@ void CoreSymbol::history_load(unsigned int i)
 {
     auto x = dynamic_cast<CoreSymbol::HistoryItem *>(history.at(history_current).get());
     sym = x->sym;
+    sym.expand(pin_display_mode);
     s_signal_rebuilt.emit();
 }
 
@@ -293,38 +296,7 @@ std::pair<Coordi, Coordi> CoreSymbol::get_bbox()
     return bb;
 }
 
-bool CoreSymbol::can_search_for_object_type(ObjectType ty) const
-{
-    switch (ty) {
-    case ObjectType::SYMBOL_PIN:
-        return true;
-        break;
-    default:;
-    }
-
-    return false;
-}
-
-std::list<Core::SearchResult> CoreSymbol::search(const SearchQuery &q)
-{
-    std::list<Core::SearchResult> results;
-    if (q.query.size() == 0)
-        return results;
-    if (q.types.count(ObjectType::SYMBOL_PIN)) {
-        for (const auto &it : sym.pins) {
-            if (it.second.name.find(q.query) != std::string::npos) {
-                results.emplace_back(ObjectType::SYMBOL_PIN, it.first);
-                auto &x = results.back();
-                x.location = it.second.position;
-                x.selectable = true;
-            }
-        }
-    }
-    sort_search_results(results, q);
-    return results;
-}
-
-Symbol *CoreSymbol::get_symbol(bool work)
+Symbol *CoreSymbol::get_symbol()
 {
     return &sym;
 }
@@ -337,24 +309,32 @@ void CoreSymbol::reload_pool()
     rebuild();
 }
 
-void CoreSymbol::commit()
+void CoreSymbol::set_pin_display_mode(Symbol::PinDisplayMode mode)
 {
-    set_needs_save(true);
+    if (tool_is_active())
+        return;
+    pin_display_mode = mode;
+    sym.expand(pin_display_mode);
 }
 
-void CoreSymbol::revert()
+const std::string &CoreSymbol::get_filename() const
 {
-    history_load(history_current);
-    reverted = true;
+    return m_filename;
 }
 
-void CoreSymbol::save()
+void CoreSymbol::save(const std::string &suffix)
 {
     s_signal_save.emit();
 
     json j = sym.serialize();
-    save_json_to_file(m_filename, j);
-
-    set_needs_save(false);
+    save_json_to_file(m_filename + suffix, j);
 }
+
+
+void CoreSymbol::delete_autosave()
+{
+    if (Glib::file_test(m_filename + autosave_suffix, Glib::FILE_TEST_IS_REGULAR))
+        Gio::File::create_for_path(m_filename + autosave_suffix)->remove();
+}
+
 } // namespace horizon

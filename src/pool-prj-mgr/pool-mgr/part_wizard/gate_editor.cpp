@@ -16,6 +16,8 @@ GateEditorWizard::GateEditorWizard(BaseObjectType *cobject, const Glib::RefPtr<G
     x->get_widget("gate_suffix", suffix_entry);
     x->get_widget("gate_unit_name", unit_name_entry);
     x->get_widget("gate_unit_name_from_mpn", unit_name_from_mpn_button);
+    x->get_widget("gate_symbol_name", symbol_name_entry);
+    x->get_widget("gate_symbol_name_from_unit", symbol_name_from_unit_button);
 
     gate_label->set_text("Gate: " + gate->name);
 
@@ -24,7 +26,7 @@ GateEditorWizard::GateEditorWizard(BaseObjectType *cobject, const Glib::RefPtr<G
 
     {
         Gtk::Button *from_part_button;
-        unit_location_entry = PartWizard::pack_location_entry(x, "gate_unit_location_box", &from_part_button);
+        unit_location_entry = pa->pack_location_entry(x, "gate_unit_location_box", &from_part_button);
         from_part_button->set_label("From part");
         from_part_button->signal_clicked().connect([this] {
             auto rel = get_suffixed_filename_from_part();
@@ -36,7 +38,7 @@ GateEditorWizard::GateEditorWizard(BaseObjectType *cobject, const Glib::RefPtr<G
 
     {
         Gtk::Button *from_part_button;
-        symbol_location_entry = PartWizard::pack_location_entry(x, "gate_symbol_location_box", &from_part_button);
+        symbol_location_entry = pa->pack_location_entry(x, "gate_symbol_location_box", &from_part_button);
         from_part_button->set_label("From part");
         from_part_button->signal_clicked().connect([this] {
             auto rel = get_suffixed_filename_from_part();
@@ -47,7 +49,9 @@ GateEditorWizard::GateEditorWizard(BaseObjectType *cobject, const Glib::RefPtr<G
     }
 
     unit_name_from_mpn_button->signal_clicked().connect(
-            [this] { unit_name_entry->set_text(parent->part_mpn_entry->get_text()); });
+            [this] { unit_name_entry->set_text(parent->part_mpn_entry->get_text() + " " + suffix_entry->get_text()); });
+    symbol_name_from_unit_button->signal_clicked().connect(
+            [this] { symbol_name_entry->set_text(unit_name_entry->get_text()); });
 }
 
 std::string GateEditorWizard::get_suffixed_filename_from_part()
@@ -74,12 +78,18 @@ void GateEditorWizard::update_symbol_pins(unsigned int n_mapped)
     }
 }
 
+void GateEditorWizard::set_can_edit_symbol_name(bool v)
+{
+    symbol_name_entry->set_sensitive(v);
+    symbol_name_from_unit_button->set_sensitive(v);
+}
+
 GateEditorWizard *GateEditorWizard::create(Gate *g, PartWizard *pa)
 {
     GateEditorWizard *w;
     Glib::RefPtr<Gtk::Builder> x = Gtk::Builder::create();
     x->add_from_resource(
-            "/net/carrotIndustries/horizon/pool-prj-mgr/pool-mgr/part_wizard/"
+            "/org/horizon-eda/horizon/pool-prj-mgr/pool-mgr/part_wizard/"
             "part_wizard.ui");
     std::cout << "create gate ed" << std::endl;
     x->get_widget_derived("gate_editor", w, g, pa);

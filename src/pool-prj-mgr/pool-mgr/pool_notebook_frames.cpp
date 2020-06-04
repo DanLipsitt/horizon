@@ -110,16 +110,12 @@ void PoolNotebook::construct_frames()
 
     br->signal_selected().connect([br, canvas] {
         auto sel = br->get_selected();
-        if (!sel) {
-            canvas->clear();
-        }
-        else {
-            canvas->load(ObjectType::FRAME, sel);
-        }
+        canvas->load(ObjectType::FRAME, sel);
     });
 
     br->signal_activated().connect([this, br] { handle_edit_frame(br->get_selected()); });
 
     append_page(*paned, "Frames");
+    install_search_once(paned, br);
 }
 } // namespace horizon

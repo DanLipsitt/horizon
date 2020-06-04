@@ -21,12 +21,25 @@
 #include "via.hpp"
 #include "via_padstack_provider.hpp"
 #include "connection_line.hpp"
+#include "step_export_settings.hpp"
+#include "pnp_export_settings.hpp"
+#include "airwire.hpp"
+#include "included_board.hpp"
+#include "board_panel.hpp"
+#include "common/picture.hpp"
 #include <fstream>
 #include <map>
 #include <vector>
 
 namespace horizon {
 using json = nlohmann::json;
+
+class BoardColors {
+public:
+    BoardColors();
+    Color solder_mask;
+    Color substrate;
+};
 
 class Board : public ObjectProvider, public LayerProvider {
 private:
@@ -46,13 +59,19 @@ public:
     void expand_packages();
 
     Board(const Board &brd);
-    void operator=(const Board &brd);
+    Board(shallow_copy_t sh, const Board &brd);
+    void operator=(const Board &brd) = delete;
     void update_refs();
     void update_airwires(bool fast = false, const std::set<UUID> &nets = {});
     void disconnect_package(BoardPackage *pkg);
 
     void smash_package(BoardPackage *pkg);
+    void copy_package_silkscreen_texts(BoardPackage *dest, const BoardPackage *src);
     void unsmash_package(BoardPackage *pkg);
+    void smash_package_silkscreen_graphics(BoardPackage *pkg);
+    void smash_package_outline(BoardPackage &pkg);
+    void smash_panel_outline(BoardPanel &panel);
+
     Junction *get_junction(const UUID &uu) override;
     Polygon *get_polygon(const UUID &uu) override;
     const std::map<int, Layer> &get_layers() const override;
@@ -64,6 +83,8 @@ public:
     std::vector<KeepoutContour> get_keepout_contours() const;
     std::pair<Coordi, Coordi> get_bbox() const;
     void update_pdf_export_settings(PDFExportSettings &settings);
+    std::map<const BoardPackage *, PnPRow> get_PnP(const PnPExportSettings &settings) const;
+
 
     UUID uuid;
     Block *block;
@@ -73,7 +94,6 @@ public:
     std::map<UUID, BoardPackage> packages;
     std::map<UUID, Junction> junctions;
     std::map<UUID, Track> tracks;
-    std::map<UUID, Track> airwires;
     std::map<UUID, Via> vias;
     std::map<UUID, Text> texts;
     std::map<UUID, Line> lines;
@@ -82,11 +102,16 @@ public:
     std::map<UUID, Keepout> keepouts;
     std::map<UUID, Dimension> dimensions;
     std::map<UUID, ConnectionLine> connection_lines;
+    std::map<UUID, IncludedBoard> included_boards;
+    std::map<UUID, BoardPanel> board_panels;
+    std::map<UUID, Picture> pictures;
 
     std::vector<Warning> warnings;
 
     BoardRules rules;
     FabOutputSettings fab_output_settings;
+
+    std::map<UUID, std::list<Airwire>> airwires;
 
     class StackupLayer {
     public:
@@ -99,14 +124,10 @@ public:
     };
     std::map<int, StackupLayer> stackup;
 
-    class Colors {
-    public:
-        Colors();
-        Color solder_mask;
-        Color substrate;
-    };
-    Colors colors;
+    BoardColors colors;
     PDFExportSettings pdf_export_settings;
+    STEPExportSettings step_export_settings;
+    PnPExportSettings pnp_export_settings;
 
     ClipperLib::Paths obstacles;
     ClipperLib::Path track_path;
@@ -122,10 +143,13 @@ public:
     std::set<UUID> packages_expand;
 
     json serialize() const;
+    void save_pictures(const std::string &dir) const;
+    void load_pictures(const std::string &dir);
 
 private:
     unsigned int n_inner_layers = 0;
     ClipperLib::Paths get_thermals(class Plane *plane, const class CanvasPads *ca) const;
     void flip_package_layer(int &layer) const;
+    Board(const Board &brd, CopyMode copy_mode);
 };
 } // namespace horizon

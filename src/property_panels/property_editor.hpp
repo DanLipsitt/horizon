@@ -33,6 +33,11 @@ public:
         return s_signal_apply_all;
     }
 
+    type_signal_changed signal_activate()
+    {
+        return s_signal_activate;
+    }
+
     bool get_apply_all();
 
     virtual ~PropertyEditor()
@@ -52,6 +57,7 @@ protected:
 
     type_signal_changed s_signal_changed;
     type_signal_changed s_signal_apply_all;
+    type_signal_changed s_signal_activate;
     PropertyValue dummy;
     PropertyMeta meta;
 
@@ -201,9 +207,6 @@ protected:
 private:
     Gtk::SpinButton *sp = nullptr;
     PropertyValueInt value;
-    bool sp_output();
-    void changed();
-    int sp_input(double *v);
 };
 
 class PropertyEditorStringMultiline : public PropertyEditor {
@@ -244,6 +247,28 @@ protected:
 
 class PropertyEditorExpand : public PropertyEditorInt {
     using PropertyEditorInt::PropertyEditorInt;
+
+protected:
+    Gtk::Widget *create_editor() override;
+};
+
+class PropertyEditorDouble : public PropertyEditor {
+    using PropertyEditor::PropertyEditor;
+
+public:
+    void reload() override;
+    PropertyValue &get_value() override;
+
+protected:
+    Gtk::Widget *create_editor() override;
+
+    Gtk::SpinButton *sp = nullptr;
+    PropertyValueDouble value;
+    void changed();
+};
+
+class PropertyEditorOpacity : public PropertyEditorDouble {
+    using PropertyEditorDouble::PropertyEditorDouble;
 
 protected:
     Gtk::Widget *create_editor() override;

@@ -53,7 +53,10 @@ enum class ObjectType {
     MODEL_3D,
     FRAME,
     KEEPOUT,
-    CONNECTION_LINE
+    CONNECTION_LINE,
+    AIRWIRE,
+    BOARD_PANEL,
+    PICTURE
 };
 enum class PatchType { OTHER, TRACK, PAD, PAD_TH, VIA, PLANE, HOLE_PTH, HOLE_NPTH, BOARD_EDGE, TEXT };
 
@@ -237,4 +240,13 @@ constexpr int64_t operator"" _mm(unsigned long long int i)
 {
     return i * 1000000;
 }
+
+struct shallow_copy_t {
+    explicit shallow_copy_t() = default;
+};
+
+constexpr shallow_copy_t shallow_copy = shallow_copy_t();
+
+enum class CopyMode { DEEP, SHALLOW };
+
 } // namespace horizon

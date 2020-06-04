@@ -97,6 +97,14 @@ Sheet::Sheet(const UUID &uu, const json &j, Block &block, Pool &pool)
             load_and_log(arcs, ObjectType::ARC, std::forward_as_tuple(u, it.value(), *this), Logger::Domain::SCHEMATIC);
         }
     }
+    if (j.count("pictures")) {
+        const json &o = j["pictures"];
+        for (auto it = o.cbegin(); it != o.cend(); ++it) {
+            auto u = UUID(it.key());
+            load_and_log(pictures, ObjectType::PICTURE, std::forward_as_tuple(u, it.value()),
+                         Logger::Domain::SCHEMATIC);
+        }
+    }
     if (j.count("title_block_values")) {
         const json &o = j["title_block_values"];
         for (auto it = o.cbegin(); it != o.cend(); ++it) {
@@ -152,123 +160,73 @@ void Sheet::merge_net_lines(LineNet *a, LineNet *b, Junction *ju)
     }
 }
 
-static void append_pin_name(std::string &name, const std::string &x)
+void Sheet::expand_symbol_without_net_lines(const UUID &sym_uuid, const Schematic &sch)
 {
-    if (name.size())
-        name += " ";
-    name += x;
+    auto &schsym = symbols.at(sym_uuid);
+    if (schsym.symbol.unit->uuid != schsym.gate->unit->uuid) {
+        throw std::logic_error("unit mismatch");
+    }
+    schsym.symbol = *schsym.pool_symbol;
+    schsym.symbol.expand();
+    schsym.apply_expand();
+    if (!schsym.display_directions) {
+        for (auto &it_pin : schsym.symbol.pins) {
+            it_pin.second.direction = Pin::Direction::PASSIVE;
+        }
+    }
+    schsym.symbol.apply_placement(schsym.placement);
+
+    schsym.apply_pin_names();
+
+    if (schsym.component->part) {
+        for (auto &it_pin : schsym.symbol.pins) {
+            it_pin.second.pad = "";
+        }
+        std::map<SymbolPin *, std::vector<std::string>> pads;
+        for (const auto &it_pad_map : schsym.component->part->pad_map) {
+            if (it_pad_map.second.gate == schsym.gate) {
+                if (schsym.symbol.pins.count(it_pad_map.second.pin->uuid)) {
+                    pads[&schsym.symbol.pins.at(it_pad_map.second.pin->uuid)].push_back(
+                            schsym.component->part->package->pads.at(it_pad_map.first).name);
+                }
+            }
+        }
+        for (auto &it_pin : pads) {
+            std::sort(it_pin.second.begin(), it_pin.second.end(),
+                      [](const auto &a, const auto &b) { return strcmp_natural(a, b) < 0; });
+            if (it_pin.second.size() <= 3 || schsym.display_all_pads) {
+                for (const auto &pad : it_pin.second) {
+                    it_pin.first->pad += pad + " ";
+                }
+            }
+            else {
+                it_pin.first->pad = it_pin.second.front() + " ... " + it_pin.second.back();
+            }
+        }
+    }
+    for (auto &it_text : schsym.symbol.texts) {
+        it_text.second.text = schsym.replace_text(it_text.second.text, nullptr, sch);
+    }
+
+    for (auto &it_text : schsym.texts) {
+        it_text->text_override = schsym.replace_text(it_text->text, &it_text->overridden, sch);
+    }
 }
 
 void Sheet::expand_symbols(const class Schematic &sch)
 {
     for (auto &it_sym : symbols) {
-        SchematicSymbol &schsym = it_sym.second;
-        const Component *comp = schsym.component;
-        if (schsym.symbol.unit->uuid != schsym.gate->unit->uuid) {
-            throw std::logic_error("unit mismatch");
-        }
-        schsym.symbol = *schsym.pool_symbol;
-        schsym.symbol.expand();
-        schsym.apply_expand();
-        if (!schsym.display_directions) {
-            for (auto &it_pin : schsym.symbol.pins) {
-                it_pin.second.direction = Pin::Direction::PASSIVE;
-            }
-        }
-        schsym.symbol.apply_placement(schsym.placement);
-
-        if (schsym.pin_display_mode == SchematicSymbol::PinDisplayMode::ALL) {
-            for (auto &it_pin : schsym.symbol.pins) {
-                auto pin_uuid = it_pin.first;
-                it_pin.second.name = "";
-                for (auto &pin_name : schsym.gate->unit->pins.at(pin_uuid).names) {
-                    it_pin.second.name += pin_name + " ";
-                }
-                UUIDPath<2> path(schsym.gate->uuid, pin_uuid);
-                if (comp->custom_pin_names.count(path)) {
-                    it_pin.second.name += comp->custom_pin_names.at(path) + " ";
-                }
-                it_pin.second.name += "(" + schsym.gate->unit->pins.at(pin_uuid).primary_name + ")";
-            }
-        }
-        else if (schsym.pin_display_mode == SchematicSymbol::PinDisplayMode::CUSTOM_ONLY) {
-            for (auto &it_pin : schsym.symbol.pins) {
-                auto pin_uuid = it_pin.first;
-                UUIDPath<2> path(schsym.gate->uuid, pin_uuid);
-                if (comp->custom_pin_names.count(path) && comp->custom_pin_names.at(path).size()) {
-                    it_pin.second.name = comp->custom_pin_names.at(path);
-                }
-                else {
-                    it_pin.second.name = schsym.gate->unit->pins.at(pin_uuid).primary_name;
-                }
-            }
-        }
-        else {
-            for (auto &it_pin : schsym.symbol.pins) {
-                auto pin_uuid = it_pin.first;
-                UUIDPath<2> path(schsym.gate->uuid, pin_uuid);
-                const auto &pin = schsym.gate->unit->pins.at(pin_uuid);
-                if (comp->pin_names.count(path) && comp->pin_names.at(path).size()) {
-                    const auto &names = comp->pin_names.at(path);
-                    it_pin.second.name.clear();
-                    if (names.count(-1) || (schsym.pin_display_mode == SchematicSymbol::PinDisplayMode::BOTH))
-                        it_pin.second.name = schsym.gate->unit->pins.at(pin_uuid).primary_name;
-                    for (const auto &it : names) {
-                        if (it == -2) {
-                            // nop, see later
-                        }
-                        else if (it == -1) {
-                            // nop see before
-                        }
-                        else {
-                            if (it >= 0 && it < ((int)pin.names.size()))
-                                append_pin_name(it_pin.second.name, pin.names.at(it));
-                        }
-                    }
-                    if (names.count(-2) && comp->custom_pin_names.count(path)) {
-                        append_pin_name(it_pin.second.name, comp->custom_pin_names.at(path));
-                    }
-                }
-                else {
-                    it_pin.second.name = schsym.gate->unit->pins.at(pin_uuid).primary_name;
-                }
-            }
-        }
-
-        if (schsym.component->part) {
-            for (auto &it_pin : schsym.symbol.pins) {
-                it_pin.second.pad = "";
-            }
-            std::map<SymbolPin *, std::vector<std::string>> pads;
-            for (const auto &it_pad_map : schsym.component->part->pad_map) {
-                if (it_pad_map.second.gate == schsym.gate) {
-                    if (schsym.symbol.pins.count(it_pad_map.second.pin->uuid)) {
-                        pads[&schsym.symbol.pins.at(it_pad_map.second.pin->uuid)].push_back(
-                                schsym.component->part->package->pads.at(it_pad_map.first).name);
-                    }
-                }
-            }
-            for (auto &it_pin : pads) {
-                std::sort(it_pin.second.begin(), it_pin.second.end(),
-                          [](const auto &a, const auto &b) { return strcmp_natural(a, b) < 0; });
-                if (it_pin.second.size() <= 3 || schsym.display_all_pads) {
-                    for (const auto &pad : it_pin.second) {
-                        it_pin.first->pad += pad + " ";
-                    }
-                }
-                else {
-                    it_pin.first->pad = it_pin.second.front() + " ... " + it_pin.second.back();
-                }
-            }
-        }
-        for (auto &it_text : schsym.symbol.texts) {
-            it_text.second.text = schsym.replace_text(it_text.second.text, nullptr, sch);
-        }
-
-        for (auto &it_text : schsym.texts) {
-            it_text->text_override = schsym.replace_text(it_text->text, &it_text->overridden, sch);
-        }
+        expand_symbol_without_net_lines(it_sym.first, sch);
     }
+    for (auto &it_line : net_lines) {
+        LineNet &line = it_line.second;
+        line.update_refs(*this);
+    }
+}
+
+void Sheet::expand_symbol(const UUID &sym_uuid, const Schematic &sch)
+{
+    expand_symbol_without_net_lines(sym_uuid, sch);
     for (auto &it_line : net_lines) {
         LineNet &line = it_line.second;
         line.update_refs(*this);
@@ -765,6 +723,12 @@ json Sheet::serialize() const
     j["arcs"] = json::object();
     for (const auto &it : arcs) {
         j["arcs"][(std::string)it.first] = it.second.serialize();
+    }
+    if (pictures.size()) {
+        j["pictures"] = json::object();
+        for (const auto &it : pictures) {
+            j["pictures"][(std::string)it.first] = it.second.serialize();
+        }
     }
 
     return j;

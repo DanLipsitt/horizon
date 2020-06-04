@@ -1,9 +1,10 @@
 #pragma once
-#include "pool_browser.hpp"
+#include "pool_browser_stockinfo.hpp"
 #include "pool/pool_parametric.hpp"
+#include "util/stock_info_provider.hpp"
 
 namespace horizon {
-class PoolBrowserParametric : public PoolBrowser {
+class PoolBrowserParametric : public PoolBrowserStockinfo {
 public:
     class FilterAppliedLabel;
     friend FilterAppliedLabel;
@@ -14,7 +15,8 @@ public:
         return ObjectType::PART;
     }
     void add_copy_name_context_menu_item() override;
-
+    void set_similar_part_uuid(const UUID &uu);
+    void filter_similar(const UUID &uu, float tol = .1);
 
 protected:
     Glib::RefPtr<Gtk::ListStore> create_list_store() override;
@@ -22,11 +24,14 @@ protected:
     void add_sort_controller_columns() override;
     UUID uuid_from_row(const Gtk::TreeModel::Row &row) override;
     PoolItemSource pool_item_source_from_row(const Gtk::TreeModel::Row &row) override;
+    Gtk::TreeModelColumn<std::shared_ptr<StockInfoRecord>> &get_stock_info_column() override;
 
 private:
     class PoolParametric *pool_parametric;
     const PoolParametric::Table &table;
     std::map<std::string, std::reference_wrapper<const PoolParametric::Column>> columns;
+    UUID similar_part_uuid;
+
     class ListColumns : public Gtk::TreeModelColumnRecord {
     public:
         ListColumns(const PoolParametric::Table &table)
@@ -40,6 +45,7 @@ private:
             for (const auto &col : table.columns) {
                 Gtk::TreeModelColumnRecord::add(params[col.name]);
             }
+            Gtk::TreeModelColumnRecord::add(stock_info);
         }
         Gtk::TreeModelColumn<Glib::ustring> MPN;
         Gtk::TreeModelColumn<Glib::ustring> manufacturer;
@@ -48,6 +54,7 @@ private:
         Gtk::TreeModelColumn<UUID> uuid;
         Gtk::TreeModelColumn<PoolItemSource> source;
         std::map<std::string, Gtk::TreeModelColumn<std::string>> params;
+        Gtk::TreeModelColumn<std::shared_ptr<StockInfoRecord>> stock_info;
     };
     ListColumns list_columns;
 

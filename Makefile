@@ -1,6 +1,6 @@
-PKGCONFIG=pkg-config
-BUILDDIR = build
-PROGS    = $(addprefix $(BUILDDIR)/horizon-,imp pool prj eda)
+PKG_CONFIG ?= pkg-config
+BUILDDIR    = build
+PROGS       = $(addprefix $(BUILDDIR)/horizon-,imp eda)
 
 all: $(PROGS)
 pymodule: $(BUILDDIR)/horizon.so
@@ -53,6 +53,7 @@ SRC_COMMON = \
 	src/board/board.cpp\
 	src/board/board_package.cpp\
 	src/board/track.cpp\
+	src/board/airwire.cpp\
 	src/board/via_padstack_provider.cpp\
 	src/board/via.cpp\
 	src/board/plane.cpp\
@@ -72,6 +73,9 @@ SRC_COMMON = \
 	src/board/fab_output_settings.cpp\
 	src/board/board_hole.cpp\
 	src/board/connection_line.cpp\
+	src/board/step_export_settings.cpp\
+	src/board/pnp_export_settings.cpp\
+	src/board/pnp.cpp\
 	src/pool/pool.cpp \
 	src/util/placement.cpp\
 	src/util/util.cpp\
@@ -95,12 +99,20 @@ SRC_COMMON = \
 	src/common/keepout.cpp\
 	src/board/board_layers.cpp\
 	src/pool/pool_parametric.cpp \
+	src/board/included_board.cpp \
+	src/board/board_panel.cpp \
+	src/pool/pool_cached.cpp\
+	src/common/picture.cpp\
+	src/util/picture_data.cpp\
+	src/util/picture_load.cpp\
+
 
 ifeq ($(OS),Windows_NT)
     SRC_COMMON += src/util/uuid_win32.cpp
 endif
 SRC_COMMON_GEN += $(GENDIR)/resources.cpp
 SRC_COMMON_GEN += $(GENDIR)/version_gen.cpp
+SRC_COMMON_GEN += $(GENDIR)/help_texts.cpp
 
 
 SRC_CANVAS = \
@@ -134,6 +146,8 @@ SRC_CANVAS = \
 	src/util/msd.cpp\
 	src/util/msd_animator.cpp\
 	src/canvas/appearance.cpp\
+	src/canvas/bitmap_font_util.cpp\
+	src/canvas/picture_renderer.cpp\
 
 SRC_IMP = \
 	src/imp/imp_main.cpp \
@@ -144,6 +158,7 @@ SRC_IMP = \
 	src/imp/imp_schematic.cpp\
 	src/imp/imp_padstack.cpp\
 	src/imp/imp_package.cpp\
+	src/imp/imp_package_3d.cpp\
 	src/imp/imp_board.cpp\
 	src/imp/imp_frame.cpp\
 	src/imp/tool_popover.cpp\
@@ -151,92 +166,106 @@ SRC_IMP = \
 	src/imp/action.cpp\
 	src/imp/action_catalog.cpp\
 	$(SRC_CANVAS) \
+	src/document/document.cpp \
+	src/document/document_board.cpp \
 	src/core/core.cpp \
+	src/core/tool.cpp \
+	src/core/create_tool.cpp \
 	src/core/core_properties.cpp\
-	src/core/tool_move.cpp\
-	src/core/tool_place_junction.cpp\
-	src/core/tool_draw_line.cpp\
-	src/core/tool_delete.cpp\
-	src/core/tool_draw_arc.cpp\
-	src/core/tool_map_pin.cpp\
-	src/core/tool_map_symbol.cpp\
-	src/core/tool_draw_line_net.cpp\
-	src/core/tool_place_text.cpp\
-	src/core/tool_place_net_label.cpp\
-	src/core/tool_disconnect.cpp\
-	src/core/tool_bend_line_net.cpp\
-	src/core/tool_move_net_segment.cpp\
-	src/core/tool_place_power_symbol.cpp\
-	src/core/tool_edit_symbol_pin_names.cpp\
-	src/core/tool_place_bus_label.cpp\
-	src/core/tool_place_bus_ripper.cpp\
-	src/core/tool_manage_buses.cpp\
-	src/core/tool_draw_polygon.cpp\
-	src/core/tool_enter_datum.cpp\
-	src/core/tool_place_hole.cpp\
-	src/core/tool_place_pad.cpp\
-	src/core/tool_paste.cpp\
-	src/core/tool_assign_part.cpp\
-	src/core/tool_map_package.cpp\
-	src/core/tool_draw_track.cpp\
-	src/core/tool_place_via.cpp\
-	src/core/tool_route_track.cpp\
-	src/core/tool_drag_keep_slope.cpp\
-	src/core/tool_add_part.cpp\
-	src/core/tool_smash.cpp\
-	src/core/tool_place_shape.cpp\
-	src/core/tool_edit_shape.cpp\
-	src/core/tool_import_dxf.cpp\
-	src/core/tool_edit_parameter_program.cpp\
-	src/core/tool_edit_pad_parameter_set.cpp\
-	src/core/tool_draw_polygon_rectangle.cpp\
-	src/core/tool_draw_line_rectangle.cpp\
-	src/core/tool_edit_line_rectangle.cpp\
-	src/core/tool_helper_map_symbol.cpp\
-	src/core/tool_helper_move.cpp\
-	src/core/tool_helper_merge.cpp\
-	src/core/tool_edit_via.cpp\
-	src/core/tool_rotate_arbitrary.cpp\
-	src/core/tool_edit_plane.cpp\
-	src/core/tool_update_all_planes.cpp\
-	src/core/tool_draw_dimension.cpp\
-	src/core/tool_set_diffpair.cpp\
-	src/core/tool_select_more.cpp\
-	src/core/tool_set_via_net.cpp\
-	src/core/tool_lock.cpp\
-	src/core/tool_add_vertex.cpp\
-	src/core/tool_place_board_hole.cpp\
-	src/core/tool_edit_board_hole.cpp\
-	src/core/tool_generate_courtyard.cpp\
-	src/core/tool_set_group.cpp\
-	src/core/tool_copy_placement.cpp\
-	src/core/tool_copy_tracks.cpp\
-	src/core/tool_swap_nets.cpp\
-	src/core/tool_line_loop_to_polygon.cpp\
-	src/core/tool_change_unit.cpp\
-	src/core/tool_helper_line_width_setting.cpp\
-	src/core/tool_set_nc_all.cpp\
-	src/core/tool_set_nc.cpp\
-	src/core/tool_add_keepout.cpp\
-	src/core/tool_helper_draw_net_setting.cpp\
-	src/core/tool_helper_get_symbol.cpp\
-	src/core/tool_change_symbol.cpp\
-	src/core/tool_place_refdes_and_value.cpp\
-	src/core/tool_helper_restrict.cpp\
-	src/core/tool_draw_polygon_circle.cpp\
-	src/core/tool_draw_connection_line.cpp\
-	src/core/tool_backannotate_connection_lines.cpp\
-	src/core/tool_import_kicad_package.cpp\
-	src/core/cores.cpp\
+	src/core/tools/tool_move.cpp\
+	src/core/tools/tool_place_junction.cpp\
+	src/core/tools/tool_draw_line.cpp\
+	src/core/tools/tool_delete.cpp\
+	src/core/tools/tool_draw_arc.cpp\
+	src/core/tools/tool_map_pin.cpp\
+	src/core/tools/tool_map_symbol.cpp\
+	src/core/tools/tool_draw_line_net.cpp\
+	src/core/tools/tool_place_text.cpp\
+	src/core/tools/tool_place_net_label.cpp\
+	src/core/tools/tool_disconnect.cpp\
+	src/core/tools/tool_bend_line_net.cpp\
+	src/core/tools/tool_move_net_segment.cpp\
+	src/core/tools/tool_place_power_symbol.cpp\
+	src/core/tools/tool_edit_symbol_pin_names.cpp\
+	src/core/tools/tool_place_bus_label.cpp\
+	src/core/tools/tool_place_bus_ripper.cpp\
+	src/core/tools/tool_manage_buses.cpp\
+	src/core/tools/tool_draw_polygon.cpp\
+	src/core/tools/tool_enter_datum.cpp\
+	src/core/tools/tool_place_hole.cpp\
+	src/core/tools/tool_place_pad.cpp\
+	src/core/tools/tool_paste.cpp\
+	src/core/tools/tool_assign_part.cpp\
+	src/core/tools/tool_map_package.cpp\
+	src/core/tools/tool_draw_track.cpp\
+	src/core/tools/tool_place_via.cpp\
+	src/core/tools/tool_route_track.cpp\
+	src/core/tools/tool_drag_keep_slope.cpp\
+	src/core/tools/tool_add_part.cpp\
+	src/core/tools/tool_smash.cpp\
+	src/core/tools/tool_place_shape.cpp\
+	src/core/tools/tool_edit_shape.cpp\
+	src/core/tools/tool_import_dxf.cpp\
+	src/core/tools/tool_edit_pad_parameter_set.cpp\
+	src/core/tools/tool_draw_polygon_rectangle.cpp\
+	src/core/tools/tool_draw_line_rectangle.cpp\
+	src/core/tools/tool_edit_line_rectangle.cpp\
+	src/core/tools/tool_helper_map_symbol.cpp\
+	src/core/tools/tool_helper_move.cpp\
+	src/core/tools/tool_helper_merge.cpp\
+	src/core/tools/tool_edit_via.cpp\
+	src/core/tools/tool_rotate_arbitrary.cpp\
+	src/core/tools/tool_edit_plane.cpp\
+	src/core/tools/tool_update_all_planes.cpp\
+	src/core/tools/tool_draw_dimension.cpp\
+	src/core/tools/tool_set_diffpair.cpp\
+	src/core/tools/tool_set_via_net.cpp\
+	src/core/tools/tool_lock.cpp\
+	src/core/tools/tool_add_vertex.cpp\
+	src/core/tools/tool_place_board_hole.cpp\
+	src/core/tools/tool_edit_board_hole.cpp\
+	src/core/tools/tool_generate_courtyard.cpp\
+	src/core/tools/tool_generate_silkscreen.cpp\
+	src/core/tools/tool_set_group.cpp\
+	src/core/tools/tool_copy_placement.cpp\
+	src/core/tools/tool_copy_tracks.cpp\
+	src/core/tools/tool_swap_nets.cpp\
+	src/core/tools/tool_line_loop_to_polygon.cpp\
+	src/core/tools/tool_change_unit.cpp\
+	src/core/tools/tool_helper_line_width_setting.cpp\
+	src/core/tools/tool_set_nc_all.cpp\
+	src/core/tools/tool_set_nc.cpp\
+	src/core/tools/tool_add_keepout.cpp\
+	src/core/tools/tool_helper_draw_net_setting.cpp\
+	src/core/tools/tool_helper_get_symbol.cpp\
+	src/core/tools/tool_change_symbol.cpp\
+	src/core/tools/tool_place_refdes_and_value.cpp\
+	src/core/tools/tool_helper_restrict.cpp\
+	src/core/tools/tool_draw_polygon_circle.cpp\
+	src/core/tools/tool_draw_connection_line.cpp\
+	src/core/tools/tool_backannotate_connection_lines.cpp\
+	src/core/tools/tool_import_kicad_package.cpp\
+	src/core/tools/tool_smash_silkscreen_graphics.cpp\
+	src/core/tools/tool_renumber_pads.cpp\
+	src/core/tools/tool_fix.cpp\
+	src/core/tools/tool_nopopulate.cpp\
+	src/core/tools/tool_polygon_to_line_loop.cpp\
+	src/core/tools/tool_place_board_panel.cpp\
+	src/core/tools/tool_smash_panel_outline.cpp\
+	src/core/tools/tool_smash_package_outline.cpp\
+	src/core/tools/tool_resize_symbol.cpp\
+	src/core/tools/tool_round_off_vertex.cpp\
+	src/core/tools/tool_swap_gates.cpp\
+	src/core/tools/tool_place_picture.cpp\
+	src/document/documents.cpp\
 	src/core/clipboard.cpp\
 	src/core/buffer.cpp\
 	src/dialogs/map_pin.cpp\
 	src/dialogs/map_symbol.cpp\
 	src/dialogs/map_package.cpp\
 	src/dialogs/ask_net_merge.cpp\
-	src/dialogs/ask_delete_component.cpp\
 	src/dialogs/select_net.cpp\
-	src/dialogs/symbol_pin_names.cpp\
+	src/dialogs/symbol_pin_names_window.cpp\
 	src/dialogs/manage_buses.cpp\
 	src/dialogs/ask_datum.cpp\
 	src/dialogs/ask_datum_string.cpp\
@@ -246,8 +275,6 @@ SRC_IMP = \
 	src/dialogs/edit_shape.cpp\
 	src/dialogs/manage_net_classes.cpp\
 	src/dialogs/manage_power_nets.cpp\
-	src/dialogs/edit_parameter_program.cpp\
-	src/dialogs/edit_parameter_set.cpp\
 	src/dialogs/edit_pad_parameter_set.cpp\
 	src/dialogs/edit_via.cpp\
 	src/dialogs/pool_browser_dialog.cpp\
@@ -259,6 +286,12 @@ SRC_IMP = \
 	src/dialogs/edit_keepout.cpp\
 	src/dialogs/select_group_tag.cpp\
 	src/dialogs/ask_datum_angle.cpp\
+	src/dialogs/tool_window.cpp\
+	src/dialogs/renumber_pads_window.cpp\
+	src/dialogs/generate_silkscreen_window.cpp\
+	src/dialogs/select_included_board.cpp\
+	src/dialogs/manage_included_boards.cpp\
+	src/dialogs/enter_datum_window.cpp\
 	src/util/sort_controller.cpp\
 	src/core/core_symbol.cpp\
 	src/core/core_schematic.cpp\
@@ -284,6 +317,7 @@ SRC_IMP = \
 	src/widgets/component_button.cpp\
 	src/widgets/preview_canvas.cpp\
 	src/widgets/about_dialog.cpp\
+	src/widgets/project_meta_editor.cpp\
 	src/export_pdf/canvas_pdf.cpp\
 	src/export_pdf/export_pdf.cpp\
 	src/export_pdf/export_pdf_board.cpp\
@@ -313,6 +347,7 @@ SRC_IMP = \
 	src/widgets/pool_browser_unit.cpp\
 	src/widgets/pool_browser_symbol.cpp\
 	src/widgets/pool_browser_frame.cpp\
+	src/widgets/pool_browser_stockinfo.cpp\
 	src/widgets/plane_editor.cpp\
 	src/widgets/title_block_values_editor.cpp\
 	3rd_party/dxflib/dl_dxf.cpp\
@@ -348,7 +383,9 @@ SRC_IMP = \
 	src/imp/3d_view.cpp\
 	src/imp/step_export_window.cpp\
 	src/imp/tuning_window.cpp\
+	src/canvas3d/canvas_mesh.cpp\
 	src/canvas3d/canvas3d.cpp\
+	src/canvas3d/canvas3d_base.cpp\
 	src/canvas3d/cover.cpp\
 	src/canvas3d/wall.cpp\
 	src/canvas3d/face.cpp\
@@ -361,7 +398,7 @@ SRC_IMP = \
 	src/widgets/board_display_options.cpp\
 	src/widgets/log_window.cpp\
 	src/widgets/log_view.cpp\
-	src/imp/hud_util.cpp\
+	src/util/selection_util.cpp\
 	src/util/pool_completion.cpp\
 	src/export_bom/export_bom.cpp\
 	src/widgets/unplaced_box.cpp\
@@ -377,6 +414,23 @@ SRC_IMP = \
 	3rd_party/sexpr/sexpr.cpp\
 	src/util/kicad_package_parser.cpp\
 	src/widgets/pool_browser_button.cpp\
+	src/widgets/pool_browser_parametric.cpp\
+	src/util/stock_info_provider_partinfo.cpp\
+	src/util/http_client.cpp\
+	src/widgets/column_chooser.cpp\
+	src/util/csv_util.cpp\
+	src/imp/pnp_export_window.cpp\
+	src/export_pnp/export_pnp.cpp\
+	src/imp/airwire_filter_window.cpp\
+	src/imp/airwire_filter.cpp\
+	src/imp/search/searcher.cpp\
+	src/imp/search/searcher_symbol.cpp\
+	src/imp/search/searcher_schematic.cpp\
+	src/imp/search/searcher_package.cpp\
+	src/imp/search/searcher_board.cpp\
+	src/util/clipper_util.cpp\
+	src/widgets/action_button.cpp\
+	src/util/picture_util.cpp\
 
 SRC_IMPC = \
 	3rd_party/footag/wiz.c\
@@ -440,7 +494,7 @@ SRC_ROUTER = \
 	3rd_party/router/common/math/math_util.cpp\
 	3rd_party/router/wx_compat.cpp\
 	src/router/pns_horizon_iface.cpp\
-	src/core/tool_route_track_interactive.cpp\
+	src/core/tools/tool_route_track_interactive.cpp\
 
 
 SRC_POOL_UTIL = \
@@ -495,8 +549,10 @@ SRC_POOL_PRJ_MGR = \
 	src/widgets/pool_browser_frame.cpp\
 	src/widgets/pool_browser_parametric.cpp\
 	src/dialogs/pool_browser_dialog.cpp\
+	src/widgets/pool_browser_stockinfo.cpp\
 	src/widgets/cell_renderer_color_box.cpp\
 	src/widgets/where_used_box.cpp\
+	src/widgets/project_meta_editor.cpp\
 	src/util/sort_controller.cpp\
 	src/util/editor_process.cpp\
 	$(SRC_CANVAS)\
@@ -518,6 +574,7 @@ SRC_POOL_PRJ_MGR = \
 	src/util/pool_completion.cpp\
 	src/pool/pool_cached.cpp\
 	src/pool-prj-mgr/prj-mgr/prj-mgr_views.cpp\
+	src/pool-prj-mgr/prj-mgr/pool_cache_monitor.cpp\
 	src/pool-prj-mgr/prj-mgr/pool_cache_window.cpp\
 	src/pool-prj-mgr/prj-mgr/part_browser/part_browser_window.cpp\
 	src/pool-prj-mgr/prj-mgr/pool_cache_window.cpp\
@@ -532,6 +589,8 @@ SRC_POOL_PRJ_MGR = \
 	src/pool-prj-mgr/preferences_window_keys.cpp\
 	src/pool-prj-mgr/preferences_window_canvas.cpp\
 	src/pool-prj-mgr/preferences_window_pool.cpp\
+	src/pool-prj-mgr/preferences_window_partinfo.cpp\
+	src/pool-prj-mgr/preferences_window_misc.cpp\
 	src/imp/action.cpp\
 	src/imp/action_catalog.cpp\
 	src/widgets/unit_info_box.cpp\
@@ -543,6 +602,15 @@ SRC_POOL_PRJ_MGR = \
 	src/util/exception_util.cpp\
 	src/widgets/package_info_box.cpp\
 	src/widgets/pool_browser_button.cpp\
+	src/pool-prj-mgr/welcome_window.cpp\
+	src/pool-prj-mgr/output_window.cpp\
+	src/pool-prj-mgr/autosave_recovery_dialog.cpp\
+	src/util/stock_info_provider_partinfo.cpp\
+	src/widgets/help_button.cpp\
+	src/pool-prj-mgr/pool-mgr/kicad_symbol_import_wizard/kicad_symbol_import_wizard.cpp\
+	src/pool-prj-mgr/pool-mgr/kicad_symbol_import_wizard/gate_editor.cpp\
+	src/util/kicad_lib_parser.cpp\
+
 
 SRC_PGM_TEST = \
 	src/pgm-test/pgm-test.cpp
@@ -560,14 +628,21 @@ SRC_PYTHON = \
 	src/python_module/schematic.cpp \
 	src/python_module/project.cpp \
 	src/python_module/board.cpp \
+	src/python_module/pool_manager.cpp \
+	src/python_module/pool.cpp \
+	src/python_module/3d_image_exporter.cpp \
+
+SRC_OCE_EXPORT = \
+	src/export_step/export_step.cpp\
+	src/util/step_importer.cpp\
 
 SRC_ALL = $(sort $(SRC_COMMON) $(SRC_IMP) $(SRC_POOL_UTIL) $(SRC_PRJ_UTIL) $(SRC_POOL_UPDATE_PARA) $(SRC_PGM_TEST) $(SRC_POOL_PRJ_MGR) $(SRC_GEN_PKG))
 
-INC = -Isrc -I3rd_party
+INC = -Isrc -I3rd_party -Ibuild/gen
 
 DEFINES = -D_USE_MATH_DEFINES -DGLM_ENABLE_EXPERIMENTAL
 
-LIBS_COMMON = sqlite3 yaml-cpp libzip
+LIBS_COMMON = sqlite3 libzip
 ifneq ($(OS),Windows_NT)
 	LIBS_COMMON += uuid
 endif
@@ -576,10 +651,10 @@ LIBS_ALL = $(LIBS_COMMON) gtkmm-3.0 epoxy cairomm-pdf-1.0 librsvg-2.0 libzmq lib
 OPTIMIZE=-fdata-sections -ffunction-sections -O3
 #OPTIMIZE=-fdata-sections -ffunction-sections
 DEBUG   =-g3
-CXXFLAGS  =$(DEBUG) $(DEFINES) $(OPTIMIZE) $(shell $(PKGCONFIG) --cflags $(LIBS_ALL)) -MP -MMD -pthread -Wall -Wshadow -std=c++14 
+CXXFLAGS  =$(DEBUG) $(DEFINES) $(OPTIMIZE) $(shell $(PKG_CONFIG) --cflags $(LIBS_ALL)) -MP -MMD -pthread -Wall -Wshadow -std=c++17
 CFLAGS = $(filter-out -std=%,$(CXXFLAGS)) -std=c99
 LDFLAGS = -lm -lpthread
-GLIB_COMPILE_RESOURCES = $(shell $(PKGCONFIG) --variable=glib_compile_resources gio-2.0)
+GLIB_COMPILE_RESOURCES = $(shell $(PKG_CONFIG) --variable=glib_compile_resources gio-2.0)
 
 ifeq ($(OS),Windows_NT)
     LDFLAGS += -lrpcrt4
@@ -587,18 +662,21 @@ ifeq ($(OS),Windows_NT)
     LDFLAGS_GUI = -Wl,-subsystem,windows
 else
     UNAME := $(shell uname)
+    ifeq ($(UNAME), FreeBSD)
+        CXXFLAGS += -D_LIBCPP_ENABLE_CXX17_REMOVED_AUTO_PTR
+    endif
     ifeq ($(UNAME), Darwin)
-    	# O3 generate incompatibel frames?
-    	OPTIMIZE=-fdata-sections -ffunction-sections -O2
-    	# support brew on non-standart location
-    	BREWROOT ?= $(shell brew --prefix)
-    	INC += -I$(BREWROOT)/include
-    	INC_OCE = -I$(BREWROOT)/include/opencascade
-    	LDFLAGS_OCE = -L$(BREWROOT)/lib/ -lTKSTEP  -lTKernel  -lTKXCAF -lTKXSBase -lTKBRep -lTKCDF -lTKXDESTEP -lTKLCAF -lTKMath -lTKMesh -lTKTopAlgo -lTKPrim -lTKBO -lTKG3d
-    	CFLAGS += -mmacosx-version-min=10.12 
-    	CXXFLAGS += -mmacosx-version-min=10.12 
-    	LDFLAGS += -mmacosx-version-min=10.12 $(DEBUG)
-    	# osrf/homebrew-simulation/cppzmq, podofo
+        # O3 generate incompatible frames?
+		OPTIMIZE=-fdata-sections -ffunction-sections -O2
+        # support brew on non-standart location
+		BREWROOT ?= $(shell brew --prefix)
+		INC += -I$(BREWROOT)/include
+		INC_OCE = -I$(BREWROOT)/include/opencascade
+		LDFLAGS_OCE = -L$(BREWROOT)/lib/ -lTKSTEP  -lTKernel  -lTKXCAF -lTKXSBase -lTKBRep -lTKCDF -lTKXDESTEP -lTKLCAF -lTKMath -lTKMesh -lTKTopAlgo -lTKPrim -lTKBO -lTKG3d
+		CFLAGS += -mmacosx-version-min=10.12
+		CXXFLAGS += -mmacosx-version-min=10.12
+		LDFLAGS += -mmacosx-version-min=10.12 $(DEBUG)
+        # osrf/homebrew-simulation/cppzmq, podofo
     else
         LDFLAGS += -fuse-ld=gold
     endif
@@ -609,6 +687,7 @@ SRC_SHARED = $(SRC_COMMON) \
 	src/export_pdf/canvas_pdf.cpp \
 	src/export_pdf/export_pdf.cpp \
 	src/export_pdf/export_pdf_board.cpp \
+	src/export_pnp/export_pnp.cpp \
 	src/canvas/canvas.cpp \
 	src/canvas/appearance.cpp \
 	src/canvas/render.cpp \
@@ -634,6 +713,23 @@ SRC_SHARED = $(SRC_COMMON) \
 	src/board/plane_update.cpp\
 	src/canvas/canvas_pads.cpp\
 	src/canvas/canvas_patch.cpp\
+	src/util/csv_util.cpp\
+	src/util/clipper_util.cpp\
+	src/document/document.cpp \
+	src/document/document_board.cpp \
+	src/rules/cache.cpp \
+	src/board/board_rules_check.cpp \
+	src/pool-update/pool-update.cpp \
+	src/pool-update/pool-update_parametric.cpp\
+	src/pool-update/graph.cpp\
+	src/export_3d_image/export_3d_image.cpp\
+	src/canvas3d/canvas3d_base.cpp\
+	src/canvas3d/canvas_mesh.cpp\
+	src/canvas3d/background.cpp\
+	src/canvas3d/wall.cpp\
+	src/canvas3d/cover.cpp\
+	src/canvas3d/face.cpp\
+	src/canvas/gl_util.cpp\
 
 SRC_SHARED_GEN = $(SRC_COMMON_GEN)
 
@@ -656,6 +752,8 @@ OBJ_OCE          = $(addprefix $(OBJDIR)/,$(SRC_OCE:.cpp=.o))
 OBJ_PYTHON       = $(addprefix $(PICOBJDIR)/,$(SRC_PYTHON:.cpp=.o))
 OBJ_SHARED       = $(addprefix $(PICOBJDIR)/,$(SRC_SHARED:.cpp=.o))
 OBJ_SHARED      += $(addprefix $(PICOBJDIR)/,$(SRC_SHARED_GEN:.cpp=.o))
+OBJ_SHARED_OCE   = $(addprefix $(PICOBJDIR)/,$(SRC_OCE_EXPORT:.cpp=.o))
+
 
 OBJ_IMP          = $(addprefix $(OBJDIR)/,$(SRC_IMP:.cpp=.o))
 OBJ_IMP         += $(addprefix $(OBJDIR)/,$(SRC_IMPC:.c=.o))
@@ -669,8 +767,9 @@ OBJ_GEN_PKG      = $(addprefix $(OBJDIR)/,$(SRC_GEN_PKG:.cpp=.o))
 
 INC_ROUTER = -I3rd_party/router/include/ -I3rd_party/router -I3rd_party
 INC_OCE ?= -I/opt/opencascade/inc/ -I/mingw64/include/oce/ -I/usr/include/oce -I/usr/include/opencascade -I${CASROOT}/include/opencascade -I/usr/local/include/OpenCASCADE
-INC_PYTHON = $(shell $(PKGCONFIG) --cflags python3)
-LDFLAGS_OCE ?= -L /opt/opencascade/lib/ -L${CASROOT}/lib -lTKSTEP  -lTKernel  -lTKXCAF -lTKXSBase -lTKBRep -lTKCDF -lTKXDESTEP -lTKLCAF -lTKMath -lTKMesh -lTKTopAlgo -lTKPrim -lTKBO -lTKG3d
+INC_PYTHON = $(shell $(PKG_CONFIG) --cflags python3 py3cairo)
+OCE_LIBDIRS = -L/opt/opencascade/lib/ -L${CASROOT}/lib
+LDFLAGS_OCE = $(OCE_LIBDIRS) -lTKSTEP  -lTKernel  -lTKXCAF -lTKXSBase -lTKBRep -lTKCDF -lTKXDESTEP -lTKLCAF -lTKMath -lTKMesh -lTKTopAlgo -lTKPrim -lTKBO -lTKG3d
 ifeq ($(OS),Windows_NT)
 	LDFLAGS_OCE += -lTKV3d
 endif
@@ -680,6 +779,13 @@ ifeq ($(OS),Windows_NT)
 	SRC_RES = src/horizon-pool-prj-mgr.rc
 	OBJ_RES = $(addprefix $(OBJDIR)/,$(SRC_RES:.rc=.res))
 endif
+
+PREFIX ?= /usr/local
+BINDIR = ${PREFIX}/bin/
+ICONDIR = ${PREFIX}/share/icons/hicolor/
+APPSDIR = ${PREFIX}/share/applications/
+METADIR = ${PREFIX}/share/metainfo/
+INSTALL = /usr/bin/install
 
 src/preferences/color_presets.json: $(wildcard src/preferences/color_presets/*)
 	python3 scripts/make_color_presets.py $^ > $@
@@ -694,33 +800,43 @@ $(BUILDDIR)/gen/version_gen.cpp: $(wildcard .git/HEAD .git/index) version.py mak
 	$(ECHO) " $@"
 	$(QUIET)python3 make_version.py $@
 
+$(BUILDDIR)/gen/help_texts.cpp: scripts/make_help.py src/help_texts.txt $(BUILDDIR)/gen/help_texts.hpp
+	$(QUIET)$(MKDIR) $(dir $@)
+	$(ECHO) " $@"
+	$(QUIET)python3 scripts/make_help.py c src/help_texts.txt > $@
+
+$(BUILDDIR)/gen/help_texts.hpp: scripts/make_help.py src/help_texts.txt
+	$(QUIET)$(MKDIR) $(dir $@)
+	$(ECHO) " $@"
+	$(QUIET)python3 scripts/make_help.py h src/help_texts.txt > $@
+
 $(BUILDDIR)/horizon-imp: $(OBJ_COMMON) $(OBJ_ROUTER) $(OBJ_OCE) $(OBJ_IMP)
 	$(ECHO) " $@"
-	$(QUIET)$(CXX) $^ $(LDFLAGS) $(LDFLAGS_GUI) $(LDFLAGS_OCE) $(shell $(PKGCONFIG) --libs $(LIBS_COMMON) gtkmm-3.0 epoxy cairomm-pdf-1.0 librsvg-2.0 libzmq) -lpodofo -o $@
+	$(QUIET)$(CXX) $^ $(LDFLAGS) $(LDFLAGS_GUI) $(LDFLAGS_OCE) $(shell $(PKG_CONFIG) --libs $(LIBS_COMMON) gtkmm-3.0 epoxy cairomm-pdf-1.0 librsvg-2.0 libzmq libcurl) -lpodofo -o $@
 
 $(BUILDDIR)/horizon-pool: $(OBJ_COMMON) $(OBJ_POOL_UTIL)
 	$(ECHO) " $@"
-	$(QUIET)$(CXX) $^ $(LDFLAGS) $(shell $(PKGCONFIG) --libs $(LIBS_COMMON) gtkmm-3.0) -o $@
+	$(QUIET)$(CXX) $^ $(LDFLAGS) $(shell $(PKG_CONFIG) --libs $(LIBS_COMMON) gtkmm-3.0) -o $@
 
 $(BUILDDIR)/horizon-prj: $(OBJ_COMMON) $(OBJ_PRJ_UTIL)
 	$(ECHO) " $@"
-	$(QUIET)$(CXX) $^ $(LDFLAGS) $(shell $(PKGCONFIG) --libs $(LIBS_COMMON) glibmm-2.4 giomm-2.4) -o $@
+	$(QUIET)$(CXX) $^ $(LDFLAGS) $(shell $(PKG_CONFIG) --libs $(LIBS_COMMON) glibmm-2.4 giomm-2.4) -o $@
 
 $(BUILDDIR)/horizon-eda: $(OBJ_COMMON) $(OBJ_POOL_PRJ_MGR) $(OBJ_RES)
 	$(ECHO) " $@"
-	$(QUIET)$(CXX) $^ $(LDFLAGS) $(LDFLAGS_GUI) $(shell $(PKGCONFIG) --libs $(LIBS_COMMON) gtkmm-3.0 epoxy libzmq libcurl libgit2) -o $@
+	$(QUIET)$(CXX) $^ $(LDFLAGS) $(LDFLAGS_GUI) $(shell $(PKG_CONFIG) --libs $(LIBS_COMMON) gtkmm-3.0 epoxy libzmq libcurl libgit2) -o $@
 
 $(BUILDDIR)/horizon-pgm-test: $(OBJ_COMMON) $(OBJ_PGM_TEST)
 	$(ECHO) " $@"
-	$(QUIET)$(CXX) $^ $(LDFLAGS) $(LDFLAGS_GUI) $(shell $(PKGCONFIG) --libs $(LIBS_COMMON) glibmm-2.4 giomm-2.4) -o $@
+	$(QUIET)$(CXX) $^ $(LDFLAGS) $(LDFLAGS_GUI) $(shell $(PKG_CONFIG) --libs $(LIBS_COMMON) glibmm-2.4 giomm-2.4) -o $@
 
 $(BUILDDIR)/horizon-gen-pkg: $(OBJ_COMMON) $(OBJ_GEN_PKG)
 	$(ECHO) " $@"
-	$(QUIET)$(CXX) $^ $(LDFLAGS) $(INC) $(CXXFLAGS) $(shell $(PKGCONFIG) --libs $(LIBS_COMMON) glibmm-2.4 giomm-2.4) -o $@
+	$(QUIET)$(CXX) $^ $(LDFLAGS) $(INC) $(CXXFLAGS) $(shell $(PKG_CONFIG) --libs $(LIBS_COMMON) glibmm-2.4 giomm-2.4) -o $@
 
-$(BUILDDIR)/horizon.so: $(OBJ_PYTHON) $(OBJ_SHARED)
+$(BUILDDIR)/horizon.so: $(OBJ_PYTHON) $(OBJ_SHARED) $(OBJ_SHARED_OCE)
 	$(ECHO) " $@"
-	$(QUIET)$(CXX) $^ $(LDFLAGS) $(INC) $(CXXFLAGS) $(shell $(PKGCONFIG) --libs $(LIBS_COMMON) python3 glibmm-2.4 giomm-2.4) -lpodofo -shared -o $@
+	$(QUIET)$(CXX) $^ $(LDFLAGS) $(INC) $(CXXFLAGS) $(shell $(PKG_CONFIG) --libs $(LIBS_COMMON) python3 glibmm-2.4 giomm-2.4 cairomm-1.0 py3cairo) -lpodofo  $(OCE_LIBDIRS) -lTKXDESTEP -lOSMesa -shared -o $@
 
 $(OBJDIR)/%.o: %.c
 	$(QUIET)$(MKDIR) $(dir $@)
@@ -735,11 +851,12 @@ $(OBJDIR)/%.o: %.cpp
 $(OBJ_ROUTER): INC += $(INC_ROUTER)
 
 $(OBJ_OCE): INC += $(INC_OCE)
+$(OBJ_SHARED_OCE): INC += $(INC_OCE)
 
 $(PICOBJDIR)/%.o: %.cpp
 	$(QUIET)$(MKDIR) $(dir $@)
 	$(ECHO) " $@"
-	$(QUIET)$(CXX) -c $(INC) $(CXXFLAGS) -fPIC $< -o $@
+	$(QUIET)$(CXX) -c $(INC) $(CXXFLAGS) -fPIC -DOFFSCREEN=1 $< -o $@
 
 $(OBJ_PYTHON): INC += $(INC_PYTHON)
 
@@ -747,16 +864,39 @@ $(OBJ_RES): $(OBJDIR)/%.res: %.rc
 	$(QUIET)$(MKDIR) $(dir $@)
 	windres $< -O coff -o $@
 
+install: $(BUILDDIR)/horizon-imp $(BUILDDIR)/horizon-eda
+	mkdir -p $(DESTDIR)$(BINDIR)
+	$(INSTALL) -m755 $(BUILDDIR)/horizon-imp $(DESTDIR)$(BINDIR)
+	$(INSTALL) -m755 $(BUILDDIR)/horizon-eda $(DESTDIR)$(BINDIR)
+	mkdir -p $(DESTDIR)$(ICONDIR)/scalable/apps
+	$(INSTALL) -m644 src/icons/scalable/apps/horizon-eda.svg $(DESTDIR)$(ICONDIR)/scalable/apps/org.horizon_eda.HorizonEDA.svg
+	mkdir -p $(DESTDIR)$(ICONDIR)/16x16/apps
+	$(INSTALL) -m644 src/icons/16x16/apps/horizon-eda.png $(DESTDIR)$(ICONDIR)/16x16/apps/org.horizon_eda.HorizonEDA.png
+	mkdir -p $(DESTDIR)$(ICONDIR)/32x32/apps
+	$(INSTALL) -m644 src/icons/32x32/apps/horizon-eda.png $(DESTDIR)$(ICONDIR)/32x32/apps/org.horizon_eda.HorizonEDA.png
+	mkdir -p $(DESTDIR)$(ICONDIR)/64x64/apps
+	$(INSTALL) -m644 src/icons/64x64/apps/horizon-eda.png $(DESTDIR)$(ICONDIR)/64x64/apps/org.horizon_eda.HorizonEDA.png
+	mkdir -p $(DESTDIR)$(ICONDIR)/256x256/apps
+	$(INSTALL) -m644 src/icons/256x256/apps/horizon-eda.png $(DESTDIR)$(ICONDIR)/256x256/apps/org.horizon_eda.HorizonEDA.png
+	mkdir -p $(DESTDIR)$(APPSDIR)
+	$(INSTALL) -m644 org.horizon_eda.HorizonEDA.desktop $(DESTDIR)$(APPSDIR)
+	mkdir -p $(DESTDIR)$(METADIR)
+	$(INSTALL) -m644 org.horizon_eda.HorizonEDA.metainfo.xml $(DESTDIR)$(METADIR)
+
+
 clean: clean_router clean_oce clean_res
-	$(RM) $(OBJ_ALL) $(BUILDDIR)/horizon-imp $(BUILDDIR)/horizon-pool $(BUILDDIR)/horizon-prj $(BUILDDIR)/horizon-pool-mgr $(BUILDDIR)/horizon-prj-mgr $(BUILDDIR)/horizon-pgm-test $(BUILDDIR)/horizon-gen-pkg $(BUILDDIR)/horizon-eda $(OBJ_ALL:.o=.d) $(GENDIR)/resources.cpp $(GENDIR)/version_gen.cpp
+	$(RM) $(OBJ_ALL) $(BUILDDIR)/horizon-imp $(BUILDDIR)/horizon-pool $(BUILDDIR)/horizon-prj $(BUILDDIR)/horizon-pool-mgr $(BUILDDIR)/horizon-prj-mgr $(BUILDDIR)/horizon-pgm-test $(BUILDDIR)/horizon-gen-pkg $(BUILDDIR)/horizon-eda $(OBJ_ALL:.o=.d) $(GENDIR)/resources.cpp $(GENDIR)/version_gen.cpp $(OBJ_COMMON) $(OBJ_COMMON:.o=.d)
 	$(RM) $(BUILDDIR)/horizon.so
+	$(RM) $(GENDIR)/help_texts.hpp
+	$(RM) $(GENDIR)/help_texts.cpp
 	$(RM) $(OBJ_SHARED) $(OBJ_PYTHON) $(OBJ_SHARED:.o=.d) $(OBJ_PYTHON:.o=.d)
+	$(RM) -r __pycache__
 
 clean_router:
 	$(RM) $(OBJ_ROUTER) $(OBJ_ROUTER:.o=.d)
 
 clean_oce:
-	$(RM) $(OBJ_OCE) $(OBJ_OCE:.o=.d)
+	$(RM) $(OBJ_OCE) $(OBJ_OCE:.o=.d) $(OBJ_SHARED_OCE) $(OBJ_SHARED_OCE:.o=.d)
 
 clean_res:
 	$(RM) $(OBJ_RES)
@@ -765,4 +905,4 @@ clean_res:
 -include  $(OBJ_ROUTER:.o=.d)
 -include  $(OBJ_OCE:.o=.d)
 
-.PHONY: clean clean_router clean_oce clean_res
+.PHONY: clean clean_router clean_oce clean_res install

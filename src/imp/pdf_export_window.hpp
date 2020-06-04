@@ -13,17 +13,16 @@ class PDFExportWindow : public Gtk::Window, public Changeable {
     friend class PDFLayerEditor;
 
 public:
-    PDFExportWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder> &x, class Core *c,
+    PDFExportWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder> &x, class IDocument *c,
                     class PDFExportSettings &s, const std::string &project_dir);
-    static PDFExportWindow *create(Gtk::Window *p, class Core *c, class PDFExportSettings &s,
+    static PDFExportWindow *create(Gtk::Window *p, class IDocument *c, class PDFExportSettings &s,
                                    const std::string &project_dir);
 
-    void set_can_export(bool v);
     void generate();
     void reload_layers();
 
 private:
-    class Core *core;
+    class IDocument *core;
     class PDFExportSettings &settings;
 
     class MyExportFileChooser : public ExportFileChooser {
@@ -45,6 +44,7 @@ private:
     Gtk::Label *progress_label = nullptr;
     Gtk::ProgressBar *progress_bar = nullptr;
     Gtk::Revealer *progress_revealer = nullptr;
+    void update_export_button();
 
     Gtk::Spinner *spinner = nullptr;
 
@@ -53,5 +53,6 @@ private:
 
 
     void export_thread(PDFExportSettings settings);
+    unsigned int n_layers = 0;
 };
 } // namespace horizon

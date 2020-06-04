@@ -1,10 +1,10 @@
 #include "background.hpp"
 #include "canvas/gl_util.hpp"
-#include "canvas3d.hpp"
+#include "canvas3d_base.hpp"
 #include <cmath>
 
 namespace horizon {
-BackgroundRenderer::BackgroundRenderer(Canvas3D *c) : ca(c)
+BackgroundRenderer::BackgroundRenderer(Canvas3DBase &c) : ca(c)
 {
 }
 
@@ -42,9 +42,9 @@ static GLuint create_vao(GLuint program)
 void BackgroundRenderer::realize()
 {
     program = gl_create_program_from_resource(
-            "/net/carrotIndustries/horizon/canvas3d/shaders/"
+            "/org/horizon-eda/horizon/canvas3d/shaders/"
             "background-vertex.glsl",
-            "/net/carrotIndustries/horizon/canvas3d/shaders/"
+            "/org/horizon-eda/horizon/canvas3d/shaders/"
             "background-fragment.glsl",
             nullptr);
     vao = create_vao(program);
@@ -58,9 +58,8 @@ void BackgroundRenderer::render()
     glUseProgram(program);
     glBindVertexArray(vao);
 
-    glUniform3f(color_top_loc, ca->background_top_color.r, ca->background_top_color.g, ca->background_top_color.b);
-    glUniform3f(color_bottom_loc, ca->background_bottom_color.r, ca->background_bottom_color.g,
-                ca->background_bottom_color.b);
+    gl_color_to_uniform_3f(color_top_loc, ca.background_top_color);
+    gl_color_to_uniform_3f(color_bottom_loc, ca.background_bottom_color);
 
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }

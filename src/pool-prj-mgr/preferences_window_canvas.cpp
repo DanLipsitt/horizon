@@ -10,7 +10,7 @@
 #include "nlohmann/json.hpp"
 #include <set>
 #include <iostream>
-
+#include <iomanip>
 
 namespace horizon {
 
@@ -34,6 +34,7 @@ static const std::map<ColorP, std::string> color_names = {
         {ColorP::PIN, "Pin"},
         {ColorP::PIN_HIDDEN, "Hidden Pin"},
         {ColorP::DIFFPAIR, "Diff. pair"},
+        {ColorP::NOPOPULATE_X, "Do not pop. X-out"},
         {ColorP::BACKGROUND, "Background"},
         {ColorP::GRID, "Grid"},
         {ColorP::CURSOR_NORMAL, "Cursor"},
@@ -51,8 +52,9 @@ static const std::map<ColorP, std::string> color_names = {
         {ColorP::SHADOW, "Highlight shadow"},
 };
 
-static const std::set<ColorP> colors_non_layer = {ColorP::NET, ColorP::BUS,        ColorP::FRAME,
-                                                  ColorP::PIN, ColorP::PIN_HIDDEN, ColorP::DIFFPAIR};
+static const std::set<ColorP> colors_non_layer = {ColorP::NET,         ColorP::BUS,        ColorP::FRAME,
+                                                  ColorP::PIN,         ColorP::PIN_HIDDEN, ColorP::DIFFPAIR,
+                                                  ColorP::NOPOPULATE_X};
 
 static const std::set<ColorP> colors_layer = {ColorP::FRAG_ORPHAN, ColorP::AIRWIRE_ROUTER, ColorP::TEXT_OVERLAY,
                                               ColorP::HOLE,        ColorP::DIMENSION,      ColorP::AIRWIRE,
@@ -68,7 +70,6 @@ public:
 protected:
     virtual std::string get_color_name() = 0;
     Gtk::DrawingArea *colorbox = nullptr;
-    void update_color(const Color &c);
 };
 
 ColorEditor::ColorEditor() : Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 5)
@@ -229,7 +230,7 @@ CanvasPreferencesEditor::CanvasPreferencesEditor(BaseObjectType *cobject, const 
     Gtk::Menu *color_preset_menu;
     GET_WIDGET(color_preset_menu);
 
-    color_presets = json_from_resource("/net/carrotIndustries/horizon/preferences/color_presets.json");
+    color_presets = json_from_resource("/org/horizon-eda/horizon/preferences/color_presets.json");
 
     {
 
@@ -324,19 +325,41 @@ CanvasPreferencesEditor::CanvasPreferencesEditor(BaseObjectType *cobject, const 
     make_cursor_size_editor(cursor_size_tool_box, appearance.cursor_size_tool,
                             [this] { preferences->signal_changed().emit(); });
 
-    Gtk::ComboBoxText *msaa_combo;
-    GET_WIDGET(msaa_combo);
-    msaa_combo->append("0", "Off");
-    for (int i = 1; i < 5; i *= 2) {
-        msaa_combo->append(std::to_string(i), std::to_string(i) + "× MSAA");
+    {
+        Gtk::SpinButton *min_line_width_sp;
+        GET_WIDGET(min_line_width_sp);
+
+        min_line_width_sp->signal_output().connect([min_line_width_sp] {
+            auto v = min_line_width_sp->get_value();
+            std::ostringstream oss;
+            oss.imbue(get_locale());
+            oss << std::fixed << std::setprecision(1) << v << " px";
+            min_line_width_sp->set_text(oss.str());
+            return true;
+        });
+        entry_set_tnum(*min_line_width_sp);
+        min_line_width_sp->set_value(appearance.min_line_width);
+        min_line_width_sp->signal_changed().connect([this, min_line_width_sp, &appearance] {
+            appearance.min_line_width = min_line_width_sp->get_value();
+            preferences->signal_changed().emit();
+        });
     }
-    msaa_combo->set_active_id(std::to_string(appearance.msaa));
-    msaa_combo->signal_changed().connect([this, msaa_combo, &appearance] {
-        int msaa = std::stoi(msaa_combo->get_active_id());
-        appearance.msaa = msaa;
-        preferences->signal_changed().emit();
-    });
-    // canvas_colors_lb->set_header_func(&header_func_separator);
+
+    {
+        Gtk::ComboBoxText *msaa_combo;
+        GET_WIDGET(msaa_combo);
+        msaa_combo->append("0", "Off");
+        for (int i = 1; i < 5; i *= 2) {
+            msaa_combo->append(std::to_string(i), std::to_string(i) + "× MSAA");
+        }
+        msaa_combo->set_active_id(std::to_string(appearance.msaa));
+        msaa_combo->signal_changed().connect([this, msaa_combo, &appearance] {
+            int msaa = std::stoi(msaa_combo->get_active_id());
+            appearance.msaa = msaa;
+            preferences->signal_changed().emit();
+        });
+    }
+
     std::vector<ColorEditor *> ws;
     for (const auto &it : color_names) {
         bool add = !colors_layer.count(it.first) && !colors_non_layer.count(it.first); // in both
@@ -381,6 +404,8 @@ void CanvasPreferencesEditor::handle_export()
 
         if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(native)) == GTK_RESPONSE_ACCEPT) {
             filename = chooser->get_filename();
+            if (!endswith(filename, ".json"))
+                filename += ".json";
         }
     }
     if (filename.size()) {
@@ -463,6 +488,7 @@ void CanvasPreferencesEditor::handle_default()
     preferences->signal_changed().emit();
     update_color_chooser();
     queue_draw();
+    canvas_colors_fb->queue_draw();
 }
 
 void CanvasPreferencesEditor::load_colors(const json &j)
@@ -471,6 +497,7 @@ void CanvasPreferencesEditor::load_colors(const json &j)
     preferences->signal_changed().emit();
     update_color_chooser();
     queue_draw();
+    canvas_colors_fb->queue_draw();
 }
 
 void CanvasPreferencesEditor::update_color_chooser()
@@ -493,9 +520,9 @@ CanvasPreferencesEditor *CanvasPreferencesEditor::create(Preferences *prefs, Can
 {
     CanvasPreferencesEditor *w;
     Glib::RefPtr<Gtk::Builder> x = Gtk::Builder::create();
-    std::vector<Glib::ustring> widgets = {"canvas_box",  "adjustment1", "adjustment2",
-                                          "adjustment3", "adjustment4", "color_preset_menu"};
-    x->add_from_resource("/net/carrotIndustries/horizon/pool-prj-mgr/preferences.ui", widgets);
+    std::vector<Glib::ustring> widgets = {"canvas_box",  "adjustment1", "adjustment2",      "adjustment3",
+                                          "adjustment4", "adjustment7", "color_preset_menu"};
+    x->add_from_resource("/org/horizon-eda/horizon/pool-prj-mgr/preferences.ui", widgets);
     x->get_widget_derived("canvas_box", w, prefs, canvas_prefs, layered);
     w->reference();
     return w;

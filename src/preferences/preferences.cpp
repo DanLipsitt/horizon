@@ -27,9 +27,16 @@ static const LutEnumStr<Appearance::CursorSize> cursor_size_lut = {
         {"full", Appearance::CursorSize::FULL},
 };
 
+#ifdef G_OS_WIN32
+static const bool capture_output_default = true;
+#else
+static const bool capture_output_default = false;
+#endif
+
 Preferences::Preferences()
 {
     canvas_non_layer.appearance.layer_colors[0] = {1, 1, 0};
+    capture_output = capture_output_default;
 }
 
 void Preferences::load_default()
@@ -37,7 +44,8 @@ void Preferences::load_default()
     canvas_layer = CanvasPreferences();
     canvas_non_layer = CanvasPreferences();
     canvas_non_layer.appearance.layer_colors[0] = {1, 1, 0};
-    key_sequences.load_from_json(json_from_resource("/net/carrotIndustries/horizon/imp/keys_default.json"));
+    key_sequences.load_from_json(json_from_resource("/org/horizon-eda/horizon/imp/keys_default.json"));
+    capture_output = capture_output_default;
 }
 
 std::string Preferences::get_preferences_filename()
@@ -82,6 +90,7 @@ static const LutEnumStr<ColorP> colorp_lut = {
         COLORP_LUT_ITEM(SEARCH_CURRENT),
         COLORP_LUT_ITEM(SHADOW),
         COLORP_LUT_ITEM(CONNECTION_LINE),
+        COLORP_LUT_ITEM(NOPOPULATE_X),
 };
 
 json CanvasPreferences::serialize() const
@@ -95,6 +104,7 @@ json CanvasPreferences::serialize() const
     j["cursor_size"] = cursor_size_lut.lookup_reverse(appearance.cursor_size);
     j["cursor_size_tool"] = cursor_size_lut.lookup_reverse(appearance.cursor_size_tool);
     j["msaa"] = appearance.msaa;
+    j["min_line_width"] = appearance.min_line_width;
     return j;
 }
 
@@ -144,6 +154,7 @@ void CanvasPreferences::load_from_json(const json &j)
     appearance.cursor_size = cursor_size_lut.lookup(j.value("cursor_size", "default"));
     appearance.cursor_size_tool = cursor_size_lut.lookup(j.value("cursor_size_tool", "default"));
     appearance.msaa = j.value("msaa", 0);
+    appearance.min_line_width = j.value("min_line_width", 1.0);
     load_colors_from_json(j);
 }
 
@@ -166,6 +177,8 @@ json BoardPreferences::serialize() const
     json j;
     j["drag_start_track"] = drag_start_track;
     j["highlight_on_top"] = highlight_on_top;
+    j["show_text_in_tracks"] = show_text_in_tracks;
+    j["show_text_in_vias"] = show_text_in_vias;
     return j;
 }
 
@@ -173,6 +186,8 @@ void BoardPreferences::load_from_json(const json &j)
 {
     drag_start_track = j.value("drag_start_track", true);
     highlight_on_top = j.value("highlight_on_top", true);
+    show_text_in_tracks = j.value("show_text_in_tracks", true);
+    show_text_in_vias = j.value("show_text_in_vias", true);
 }
 
 json ZoomPreferences::serialize() const
@@ -180,6 +195,7 @@ json ZoomPreferences::serialize() const
     json j;
     j["smooth_zoom_2d"] = smooth_zoom_2d;
     j["smooth_zoom_3d"] = smooth_zoom_3d;
+    j["touchpad_pan"] = touchpad_pan;
     return j;
 }
 
@@ -187,6 +203,7 @@ void ZoomPreferences::load_from_json(const json &j)
 {
     smooth_zoom_2d = j.value("smooth_zoom_2d", true);
     smooth_zoom_3d = j.value("smooth_zoom_3d", false);
+    touchpad_pan = j.value("touchpad_pan", false);
 }
 
 json KeySequencesPreferences::serialize() const
@@ -258,7 +275,46 @@ void KeySequencesPreferences::append_from_json(const json &j)
             Logger::log_warning("error loading key sequence", Logger::Domain::UNSPECIFIED, "unknown error");
         }
     }
-} // namespace horizon
+}
+
+void PartInfoPreferences::load_from_json(const json &j)
+{
+    enable = j.at("enable");
+    url = j.at("url");
+    preferred_distributor = j.at("preferred_distributor");
+    ignore_moq_gt_1 = j.at("ignore_moq_gt_1");
+    max_price_breaks = j.value("max_price_breaks", 3);
+}
+
+json PartInfoPreferences::serialize() const
+{
+    json j;
+    j["enable"] = enable;
+    j["url"] = url;
+    j["preferred_distributor"] = preferred_distributor;
+    j["ignore_moq_gt_1"] = ignore_moq_gt_1;
+    j["max_price_breaks"] = max_price_breaks;
+    return j;
+}
+
+bool PartInfoPreferences::is_enabled() const
+{
+    return enable && preferred_distributor.size();
+}
+
+json ActionBarPreferences::serialize() const
+{
+    json j;
+    j["enable"] = enable;
+    j["remember"] = remember;
+    return j;
+}
+
+void ActionBarPreferences::load_from_json(const json &j)
+{
+    enable = j.value("enable", true);
+    remember = j.value("remember", true);
+}
 
 json Preferences::serialize() const
 {
@@ -269,6 +325,9 @@ json Preferences::serialize() const
     j["key_sequences"] = key_sequences.serialize();
     j["board"] = board.serialize();
     j["zoom"] = zoom.serialize();
+    j["capture_output"] = capture_output;
+    j["partinfo"] = partinfo.serialize();
+    j["action_bar"] = action_bar.serialize();
     return j;
 }
 
@@ -293,7 +352,12 @@ void Preferences::load_from_json(const json &j)
         zoom.load_from_json(j.at("zoom"));
     if (j.count("key_sequences"))
         key_sequences.load_from_json(j.at("key_sequences"));
-    key_sequences.append_from_json(json_from_resource("/net/carrotIndustries/horizon/imp/keys_default.json"));
+    if (j.count("action_bar"))
+        action_bar.load_from_json(j.at("action_bar"));
+    key_sequences.append_from_json(json_from_resource("/org/horizon-eda/horizon/imp/keys_default.json"));
+    capture_output = j.value("capture_output", capture_output_default);
+    if (j.count("partinfo"))
+        partinfo.load_from_json(j.at("partinfo"));
 }
 
 void Preferences::load()

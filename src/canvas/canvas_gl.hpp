@@ -10,6 +10,8 @@
 #include <glm/glm.hpp>
 #include "appearance.hpp"
 #include "annotation.hpp"
+#include "snap_filter.hpp"
+#include "picture_renderer.hpp"
 
 namespace horizon {
 class CanvasGL : public Canvas, public Gtk::GLArea {
@@ -20,12 +22,19 @@ class CanvasGL : public Canvas, public Gtk::GLArea {
     friend MarkerRenderer;
     friend Markers;
     friend CanvasAnnotation;
+    friend PictureRenderer;
 
 public:
     CanvasGL();
 
     enum class SelectionMode { HOVER, NORMAL };
-    SelectionMode selection_mode = SelectionMode::HOVER;
+    void set_selection_mode(SelectionMode mode);
+    SelectionMode get_selection_mode() const;
+    typedef sigc::signal<void, SelectionMode> type_signal_selection_mode_changed;
+    type_signal_selection_mode_changed signal_selection_mode_changed()
+    {
+        return s_signal_selection_mode_changed;
+    }
 
     enum class SelectionTool { BOX, LASSO, PAINT };
     SelectionTool selection_tool = SelectionTool::BOX;
@@ -93,8 +102,22 @@ public:
         return s_signal_request_display_name;
     }
 
+    typedef sigc::signal<void, bool &> type_signal_can_steal_focus;
+    type_signal_can_steal_focus signal_can_steal_focus()
+    {
+        return s_signal_can_steal_focus;
+    }
+
+    typedef sigc::signal<void> type_signal_scale_changed;
+    type_signal_scale_changed signal_scale_changed()
+    {
+        return s_signal_scale_changed;
+    }
+
     void center_and_zoom(const Coordi &center, float scale = -1);
     void zoom_to_bbox(const Coordf &a, const Coordf &b);
+    void zoom_to_bbox(const std::pair<Coordf, Coordf> &bb);
+    void ensure_min_size(float w, float h);
 
     Glib::PropertyProxy<int> property_work_layer()
     {
@@ -119,25 +142,29 @@ public:
     void set_appearance(const Appearance &a);
     const Color &get_color(ColorP colorp) const;
 
+    bool touchpad_pan = false;
+
     bool smooth_zoom = true;
+    bool snap_to_targets = true;
 
     void inhibit_drag_selection();
-
-    bool steal_focus = true;
 
     int _animate_step(GdkFrameClock *frame_clock);
 
     float get_width() const
     {
-        return width;
+        return m_width;
     }
     float get_height() const
     {
-        return height;
+        return m_height;
     }
 
     CanvasAnnotation *create_annotation();
     void remove_annotation(CanvasAnnotation *a);
+    bool layer_is_annotation(int l) const;
+
+    std::set<SnapFilter> snap_filter;
 
 protected:
     void push() override;
@@ -149,11 +176,12 @@ private:
     static const int MAT3_YY = 4;
     static const int MAT3_Y0 = 5;
 
-    float width, height;
+    float m_width, m_height;
     glm::mat3 screenmat;
     float scale = 1e-5;
     Coord<float> offset;
     glm::mat3 viewmat;
+    glm::mat3 viewmat_noflip;
     bool flip_view = false;
     void update_viewmat();
 
@@ -186,6 +214,8 @@ private:
     TriangleRenderer triangle_renderer;
 
     MarkerRenderer marker_renderer;
+
+    PictureRenderer picture_renderer;
 
     void pan_drag_begin(GdkEventButton *button_event);
     void pan_drag_end(GdkEventButton *button_event);
@@ -224,10 +254,32 @@ private:
     Gdk::ModifierType grid_fine_modifier = Gdk::MOD1_MASK;
     float cursor_size = 20;
 
-    int annotation_layer_current = 20000;
+    static const int first_annotation_layer = 20000;
+    int annotation_layer_current = first_annotation_layer;
     std::map<int, CanvasAnnotation> annotations;
 
-    GdkEventType last_button_event = GDK_BUTTON_PRESS;
+    void draw_bitmap_text(const Coordf &p, float scale, const std::string &rtext, int angle, ColorP color,
+                          int layer) override;
+    std::pair<Coordf, Coordf> measure_bitmap_text(const std::string &text) const override;
+    void draw_bitmap_text_box(const Placement &q, float width, float height, const std::string &s, ColorP color,
+                              int layer, TextBoxMode mode) override;
+
+    SelectionMode selection_mode = SelectionMode::HOVER;
+
+    Glib::RefPtr<Gtk::GestureZoom> gesture_zoom;
+    void zoom_gesture_begin_cb(GdkEventSequence *seq);
+    void zoom_gesture_update_cb(GdkEventSequence *seq);
+    Coord<float> gesture_zoom_pos_orig;
+    Coord<float> gesture_zoom_offset_orig;
+    float gesture_zoom_scale_orig = 1;
+
+    Glib::RefPtr<Gtk::GestureDrag> gesture_drag;
+    Coord<float> gesture_drag_offset_orig;
+
+    void drag_gesture_begin_cb(GdkEventSequence *seq);
+    void drag_gesture_update_cb(GdkEventSequence *seq);
+
+    bool can_snap_to_target(const Target &t) const;
 
 protected:
     void on_size_allocate(Gtk::Allocation &alloc) override;
@@ -241,8 +293,11 @@ protected:
 
     type_signal_selection_changed s_signal_selection_changed;
     type_signal_selection_changed s_signal_hover_selection_changed;
+    type_signal_selection_mode_changed s_signal_selection_mode_changed;
     type_signal_cursor_moved s_signal_cursor_moved;
     type_signal_grid_mul_changed s_signal_grid_mul_changed;
     type_signal_request_display_name s_signal_request_display_name;
+    type_signal_can_steal_focus s_signal_can_steal_focus;
+    type_signal_scale_changed s_signal_scale_changed;
 };
 } // namespace horizon

@@ -8,7 +8,7 @@ View3DWindow *View3DWindow::create(const class Board *b, class Pool *p)
 {
     View3DWindow *w;
     Glib::RefPtr<Gtk::Builder> x = Gtk::Builder::create();
-    x->add_from_resource("/net/carrotIndustries/horizon/imp/3d_view.ui");
+    x->add_from_resource("/org/horizon-eda/horizon/imp/3d_view.ui");
     x->get_widget_derived("window", w, b, p);
 
     return w;
@@ -210,10 +210,16 @@ View3DWindow::View3DWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Buil
         }
     });
 
-    Gtk::Revealer *model_loading_revealer;
     x->get_widget("model_loading_revealer", model_loading_revealer);
-    canvas->signal_models_loading().connect(
-            [model_loading_revealer](bool v) { model_loading_revealer->set_reveal_child(v); });
+    x->get_widget("model_loading_spinner", model_loading_spinner);
+    x->get_widget("model_loading_progress", model_loading_progress);
+    canvas->signal_models_loading().connect([this](unsigned int i, unsigned int n) {
+        bool loading = i < n;
+        model_loading_revealer->set_reveal_child(loading);
+        model_loading_spinner->property_active() = loading;
+        model_loading_progress->set_visible(n > 1);
+        model_loading_progress->set_fraction(i / (n * 1.0));
+    });
 
     Gtk::ComboBoxText *msaa_combo;
     x->get_widget("msaa_combo", msaa_combo);
@@ -243,8 +249,7 @@ void View3DWindow::set_smooth_zoom(bool smooth)
 void View3DWindow::update(bool clear)
 {
     s_signal_request_update.emit();
-    canvas->patches.clear();
-    canvas->update2(*board);
+    canvas->update(*board);
     if (clear)
         canvas->clear_3d_models();
     canvas->load_models_async(pool);

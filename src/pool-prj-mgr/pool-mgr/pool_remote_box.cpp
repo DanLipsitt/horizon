@@ -1,7 +1,6 @@
 #include "pool_remote_box.hpp"
 #include <git2.h>
 #include <git2/cred_helpers.h>
-#include <git2/sys/repository.h>
 #include "util/autofree_ptr.hpp"
 #include "util/gtk_util.hpp"
 #include "pool_notebook.hpp"
@@ -12,6 +11,7 @@
 #include "util/github_client.hpp"
 #include "util/str_util.hpp"
 #include "util/util.hpp"
+#include <iomanip>
 
 namespace horizon {
 
@@ -299,7 +299,7 @@ PullRequestItemBox *PullRequestItemBox::create(const json &j)
 {
     PullRequestItemBox *w;
     Glib::RefPtr<Gtk::Builder> x = Gtk::Builder::create();
-    x->add_from_resource("/net/carrotIndustries/horizon/pool-prj-mgr/window.ui", "pull_request_item");
+    x->add_from_resource("/org/horizon-eda/horizon/pool-prj-mgr/window.ui", "pull_request_item");
     x->get_widget_derived("pull_request_item", w, j);
     w->reference();
     return w;
@@ -347,9 +347,9 @@ bool PoolRemoteBox::exists_in_pool(Pool &pool, ObjectType ty, const UUID &uu)
     }
 }
 
-std::set<std::pair<ObjectType, UUID>> PoolRemoteBox::get_referenced(ObjectType ty, const UUID &uu)
+ItemSet PoolRemoteBox::get_referenced(ObjectType ty, const UUID &uu)
 {
-    std::set<std::pair<ObjectType, UUID>> items;
+    ItemSet items;
     items.emplace(ty, uu);
     Pool pool_remote(notebook->remote_repo);
     bool added = true;
@@ -421,7 +421,7 @@ PoolRemoteBox *PoolRemoteBox::create(PoolNotebook *nb)
     PoolRemoteBox *w;
     Glib::RefPtr<Gtk::Builder> x = Gtk::Builder::create();
     std::vector<Glib::ustring> widgets = {"box_remote", "sg_remote"};
-    x->add_from_resource("/net/carrotIndustries/horizon/pool-prj-mgr/window.ui", widgets);
+    x->add_from_resource("/org/horizon-eda/horizon/pool-prj-mgr/window.ui", widgets);
     x->get_widget_derived("box_remote", w, nb);
     w->reference();
     return w;

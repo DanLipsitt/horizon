@@ -2,7 +2,6 @@
 #include "editors/editor_window.hpp"
 #include "duplicate/duplicate_unit.hpp"
 #include "duplicate/duplicate_part.hpp"
-#include "part_wizard/part_wizard.hpp"
 #include "util/util.hpp"
 #include "nlohmann/json.hpp"
 #include "pool-prj-mgr/pool-prj-mgr-app_win.hpp"
@@ -125,9 +124,8 @@ void PoolNotebook::handle_duplicate_package(const UUID &uu)
                 continue;
             }
             else {
-                auto pkg = pool.get_package(uu);
                 std::vector<std::string> filenames;
-                DuplicatePartWidget::duplicate_package(&pool, uu, fn, pkg->name + " (Copy)", &filenames);
+                DuplicatePartWidget::duplicate_package(&pool, uu, fn, Glib::path_get_basename(fn), &filenames);
                 std::string new_pkg_filename = Glib::build_filename(fn, "package.json");
                 pool_update(
                         [this, new_pkg_filename] {
@@ -137,26 +135,6 @@ void PoolNotebook::handle_duplicate_package(const UUID &uu)
             }
         }
         break;
-    }
-}
-
-void PoolNotebook::handle_part_wizard(const UUID &uu)
-{
-    if (!part_wizard) {
-        auto pkg = pool.get_package(uu);
-        part_wizard = PartWizard::create(pkg, base_path, &pool, appwin);
-        part_wizard->present();
-        part_wizard->signal_hide().connect([this] {
-            auto files_saved = part_wizard->get_files_saved();
-            if (files_saved.size()) {
-                pool_update(nullptr, files_saved);
-            }
-            delete part_wizard;
-            part_wizard = nullptr;
-        });
-    }
-    else {
-        part_wizard->present();
     }
 }
 
@@ -194,9 +172,6 @@ void PoolNotebook::construct_packages()
             }
         });
     }
-    add_action_button("Part Wizard...", bbox, br, sigc::mem_fun(*this, &PoolNotebook::handle_part_wizard))
-            ->get_style_context()
-            ->add_class("suggested-action");
 
     auto stack = Gtk::manage(new Gtk::Stack);
     add_preview_stack_switcher(bbox, stack);
@@ -240,6 +215,7 @@ void PoolNotebook::construct_packages()
         canvas->load(ObjectType::PACKAGE, sel);
     });
     append_page(*paned, "Packages");
+    install_search_once(paned, br);
 }
 
 } // namespace horizon

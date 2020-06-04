@@ -1,4 +1,4 @@
-PRAGMA user_version=13; --keep in sync with pool.cpp
+PRAGMA user_version=15; --keep in sync with pool.cpp
 
 DROP TABLE IF EXISTS "units";
 CREATE TABLE "units" (
@@ -64,6 +64,7 @@ CREATE TABLE "parts" (
 	'package'	TEXT NOT NULL,
 	'description'	TEXT NOT NULL,
 	'parametric_table'	TEXT NOT NULL,
+	'base'	TEXT NOT NULL,
 	'filename'	TEXT,
 	'pool_uuid'	TEXT NOT NULL,
 	'overridden'	BOOL NOT NULL,
@@ -75,6 +76,14 @@ CREATE INDEX part_mpn ON parts (MPN COLLATE naturalCompare ASC);
 
 DROP INDEX IF EXISTS part_manufacturer;
 CREATE INDEX part_manufacturer ON parts (manufacturer COLLATE naturalCompare ASC);
+
+DROP TABLE IF EXISTS "orderable_MPNs";
+CREATE TABLE "orderable_MPNs" (
+	'part'	TEXT NOT NULL,
+	'uuid'	TEXT NOT NULL,
+	'MPN'	TEXT,
+	PRIMARY KEY('part', 'uuid')
+);
 
 DROP TABLE IF EXISTS "tags";
 CREATE TABLE 'tags' (

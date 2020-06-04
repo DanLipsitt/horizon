@@ -5,21 +5,24 @@
 #include "board/board_layers.hpp"
 #include "logger/logger.hpp"
 #include "util/str_util.hpp"
+#include "document/idocument_package.hpp"
+#include "pool/pool.hpp"
+#include "canvas/canvas_gl.hpp"
 
 namespace horizon {
 static const auto PLUSMINUS = std::string("\u00B1");
 
-FootagDisplay *FootagDisplay::create(CorePackage *c, enum footag_type type)
+FootagDisplay *FootagDisplay::create(IDocumentPackage *c, enum footag_type type)
 {
     FootagDisplay *w;
     Glib::RefPtr<Gtk::Builder> x = Gtk::Builder::create();
-    x->add_from_resource("/net/carrotIndustries/horizon/imp/footprint_generator/footag/footag.ui");
+    x->add_from_resource("/org/horizon-eda/horizon/imp/footprint_generator/footag/footag.ui");
     x->get_widget_derived("box", w, c, type);
     w->reference();
     return w;
 }
 
-FootagDisplay::FootagDisplay(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder> &x, CorePackage *c,
+FootagDisplay::FootagDisplay(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder> &x, IDocumentPackage *c,
                              enum footag_type type)
     : Gtk::Box(cobject), core(c), ppkg(UUID::random())
 {
@@ -30,11 +33,12 @@ FootagDisplay::FootagDisplay(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Bu
 
     params = footag_get_param(ctx);
 
-    canvas_package = Gtk::manage(new PreviewCanvas(*core->m_pool, true));
+    canvas_package = Gtk::manage(new PreviewCanvas(*core->get_pool(), true));
     canvas_package->set_size_request(400, 500);
-    canvas_package->signal_resize().connect([this](int width, int height) {
-        if (autofit->get_active()) {
-            display();
+    canvas_package->signal_size_allocate().connect([this](auto &alloc) {
+        if (autofit->get_active() && !(alloc == old_alloc)) {
+            this->display();
+            old_alloc = alloc;
         }
     });
     canvas_package->set_hexpand(true);
@@ -364,7 +368,7 @@ void FootagDisplay::calc(Package *pkg, const struct footag_spec *s)
         if (p->stack == FOOTAG_PADSTACK_NONE) {
             continue;
         }
-        auto ps = getpadstack(*core->m_pool, p->stack);
+        auto ps = getpadstack(*core->get_pool(), p->stack);
         if (!ps) {
             continue;
         }
@@ -398,6 +402,7 @@ void FootagDisplay::calc(Package *pkg, const struct footag_spec *s)
         auto uu = UUID::random();
         auto &poly = pkg->polygons.emplace(uu, uu).first->second;
         make_rlimit_rect(poly, &s->courtyard, BoardLayers::TOP_COURTYARD);
+        poly.parameter_class = "courtyard";
     }
 }
 
@@ -421,7 +426,6 @@ void FootagDisplay::calc_and_display(void)
 
 void FootagDisplay::display(void)
 {
-    canvas_package->clear();
     canvas_package->load(ppkg, autofit->get_active());
     for (const auto &la : ppkg.get_layers()) {
         auto ld = LayerDisplay::Mode::FILL_ONLY;
@@ -436,7 +440,7 @@ void FootagDisplay::display(void)
             visible = true;
             ld = LayerDisplay::Mode::OUTLINE;
         }
-        canvas_package->set_layer_display(la.first, LayerDisplay(visible, ld));
+        canvas_package->get_canvas().set_layer_display(la.first, LayerDisplay(visible, ld));
     }
 }
 
@@ -449,7 +453,6 @@ bool FootagDisplay::generate(void)
     }
 
     calc(pkg, s);
-    core->commit();
     return true;
 }
 

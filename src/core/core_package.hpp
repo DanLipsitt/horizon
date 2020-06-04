@@ -6,21 +6,22 @@
 #include <deque>
 #include <iostream>
 #include <memory>
+#include "document/idocument_package.hpp"
 
 namespace horizon {
-class CorePackage : public Core {
+class CorePackage : public Core, public virtual IDocumentPackage {
 public:
     CorePackage(const std::string &filename, Pool &pool);
     bool has_object_type(ObjectType ty) const override;
 
-    Package *get_package(bool work = true);
+    Package *get_package() override;
 
-    /*Polygon *insert_polygon(const UUID &uu, bool work = true);
-    Polygon *get_polygon(const UUID &uu, bool work=true);
-    void delete_polygon(const UUID &uu, bool work = true);
-    Hole *insert_hole(const UUID &uu, bool work = true);
-    Hole *get_hole(const UUID &uu, bool work=true);
-    void delete_hole(const UUID &uu, bool work = true);*/
+    /*Polygon *insert_polygon(const UUID &uu);
+    Polygon *get_polygon(const UUID &uu=true);
+    void delete_polygon(const UUID &uu);
+    Hole *insert_hole(const UUID &uu);
+    Hole *get_hole(const UUID &uu=true);
+    void delete_hole(const UUID &uu);*/
 
     class LayerProvider *get_layer_provider() override;
 
@@ -35,12 +36,6 @@ public:
     class Rules *get_rules() override;
 
     void rebuild(bool from_undo = false) override;
-    void commit() override;
-    void revert() override;
-    void save() override;
-
-    bool can_search_for_object_type(ObjectType type) const override;
-    std::list<SearchResult> search(const SearchQuery &q) override;
 
     const Package *get_canvas_data();
     std::pair<Coordi, Coordi> get_bbox() override;
@@ -48,18 +43,22 @@ public:
 
     void reload_pool() override;
 
+    const std::string &get_filename() const override;
+
 private:
-    std::map<UUID, Junction> *get_junction_map(bool work = true) override;
-    std::map<UUID, Line> *get_line_map(bool work = true) override;
-    std::map<UUID, Arc> *get_arc_map(bool work = true) override;
-    std::map<UUID, Text> *get_text_map(bool work = true) override;
-    std::map<UUID, Polygon> *get_polygon_map(bool work = true) override;
-    std::map<UUID, Hole> *get_hole_map(bool work = true) override;
+    std::map<UUID, Junction> *get_junction_map() override;
+    std::map<UUID, Line> *get_line_map() override;
+    std::map<UUID, Arc> *get_arc_map() override;
+    std::map<UUID, Text> *get_text_map() override;
+    std::map<UUID, Polygon> *get_polygon_map() override;
+    std::map<UUID, Hole> *get_hole_map() override;
     std::map<UUID, Keepout> *get_keepout_map() override;
     std::map<UUID, Dimension> *get_dimension_map() override;
+    std::map<UUID, Picture> *get_picture_map() override;
 
     Package package;
     std::string m_filename;
+    std::string m_pictures_dir;
 
     PackageRules rules;
 
@@ -72,6 +71,8 @@ private:
     };
     void history_push() override;
     void history_load(unsigned int i) override;
+    void save(const std::string &suffix) override;
+    void delete_autosave() override;
 
 public:
     std::string parameter_program_code;

@@ -68,14 +68,17 @@ public:
     {
         shift = {0, 0}, angle = 0, mirror = false;
     }
+    void make_relative(const Placement &to);
     void accumulate(const Placement &p);
     void invert_angle();
     void set_angle(int a);
     void inc_angle(int a);
     void inc_angle_deg(int a);
     void set_angle_deg(int a);
+    void set_angle_rad(double a);
     int get_angle() const;
     int get_angle_deg() const;
+    double get_angle_rad() const;
     Coordi shift;
 
     bool mirror = false;

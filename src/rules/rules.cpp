@@ -1,5 +1,6 @@
 #include "rules.hpp"
 #include <assert.h>
+#include "nlohmann/json.hpp"
 
 namespace horizon {
 
@@ -18,8 +19,38 @@ void RulesCheckResult::update()
     }
 }
 
+static const std::map<RulesCheckErrorLevel, std::string> level_names = {
+        {RulesCheckErrorLevel::DISABLED, "disabled"}, {RulesCheckErrorLevel::FAIL, "fail"},
+        {RulesCheckErrorLevel::NOT_RUN, "not_run"},   {RulesCheckErrorLevel::PASS, "pass"},
+        {RulesCheckErrorLevel::WARN, "warn"},
+};
+
+json RulesCheckResult::serialize() const
+{
+    json j;
+    j["level"] = level_names.at(level);
+    j["comment"] = comment;
+    auto a = json::array();
+    for (const auto &it : errors) {
+        a.push_back(it.serialize());
+    }
+    j["errors"] = a;
+    return j;
+}
+
 RulesCheckError::RulesCheckError(RulesCheckErrorLevel lev) : level(lev)
 {
+}
+
+json RulesCheckError::serialize() const
+{
+    json j;
+    j["level"] = level_names.at(level);
+    j["comment"] = comment;
+    j["sheet"] = (std::string)sheet;
+    j["location"] = location.as_array();
+    j["has_location"] = has_location;
+    return j;
 }
 
 Color rules_check_error_level_to_color(RulesCheckErrorLevel lev)
@@ -33,6 +64,8 @@ Color rules_check_error_level_to_color(RulesCheckErrorLevel lev)
         return Color::new_from_int(252, 175, 62);
     case RulesCheckErrorLevel::FAIL:
         return Color::new_from_int(239, 41, 41);
+    case RulesCheckErrorLevel::DISABLED:
+        return Color::new_from_int(117, 80, 123);
     default:
         return Color::new_from_int(255, 0, 255);
     }
@@ -48,6 +81,8 @@ std::string rules_check_error_level_to_string(RulesCheckErrorLevel lev)
         return "Warn";
     case RulesCheckErrorLevel::FAIL:
         return "Fail";
+    case RulesCheckErrorLevel::DISABLED:
+        return "Disabled";
     default:
         return "invalid";
     }
@@ -92,7 +127,7 @@ void Rules::move_rule(RuleID id, const UUID &uu, int dir)
     }
     if (dir < 0 && rule->order == 0)
         return;
-    if (dir > 0 && rule->order == rules.size() - 1)
+    if (dir > 0 && rule->order == static_cast<int>(rules.size()) - 1)
         return;
     auto rule_other = std::find_if(rules.begin(), rules.end(),
                                    [rule, dir](const auto x) { return x.second->order == rule->order + dir; });

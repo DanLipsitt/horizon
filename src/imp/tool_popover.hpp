@@ -1,5 +1,4 @@
 #pragma once
-#include "core/core.hpp"
 #include "action.hpp"
 #include "action_catalog.hpp"
 #include <gtkmm.h>
@@ -14,8 +13,8 @@ public:
     {
         return s_signal_action_activated;
     }
-    void set_can_begin(const std::map<std::pair<ActionID, ToolID>, bool> &can_begin);
-    void set_key_sequences(std::pair<ActionID, ToolID> action_id, const std::vector<KeySequence> &seqs);
+    void set_can_begin(const std::map<ActionToolID, bool> &can_begin);
+    void set_key_sequences(ActionToolID action_id, const std::vector<KeySequence> &seqs);
 
 private:
     Gtk::SearchEntry *search_entry;
@@ -62,5 +61,8 @@ private:
     void on_show() override;
     std::unique_ptr<Glib::PatternSpec> pattern;
     ActionGroup selected_group = ActionGroup::ALL;
+    double y_start = NAN;
+    Gtk::ScrolledWindow *sc = nullptr;
+    int sc_height = 0;
 };
 } // namespace horizon

@@ -46,6 +46,7 @@ void Canvas::clear()
     sheet_current_uuid = UUID();
     object_refs.clear();
     object_refs_current.clear();
+    pictures.clear();
 }
 
 void Canvas::remove_obj(const ObjectRef &r)
@@ -191,11 +192,11 @@ void Canvas::update(const Buffer &buf, LayerProvider *lp)
     render(buf);
     request_push();
 }
-void Canvas::update(const Board &brd)
+void Canvas::update(const Board &brd, PanelMode mode)
 {
     clear();
     layer_provider = &brd;
-    render(brd);
+    render(brd, true, mode);
     request_push();
 }
 void Canvas::update(const class Frame &fr, bool edit)
@@ -219,16 +220,16 @@ void Canvas::transform_restore()
     }
 }
 
-int Canvas::get_overlay_layer(int layer)
+int Canvas::get_overlay_layer(int layer, bool ignore_flip)
 {
-    if (overlay_layers.count(layer) == 0) {
+    if (overlay_layers.count({layer, ignore_flip}) == 0) {
         auto ol = overlay_layer_current++;
-        overlay_layers[layer] = ol;
+        overlay_layers[{layer, ignore_flip}] = ol;
         layer_display[ol].visible = true;
         layer_display[ol].mode = LayerDisplay::Mode::OUTLINE;
     }
 
-    return overlay_layers.at(layer);
+    return overlay_layers.at({layer, ignore_flip});
 }
 
 
@@ -249,8 +250,10 @@ std::pair<Coordf, Coordf> Canvas::get_bbox(bool visible_only) const
 {
     Coordf a, b;
     for (const auto &it : triangles) {
-        if (visible_only == false || layer_display.at(it.first).visible) {
+        if (visible_only == false || get_layer_display(it.first).visible) {
             for (const auto &it2 : it.second) {
+                if (it2.flags & Triangle::FLAG_GLYPH)
+                    continue;
                 std::vector<Coordf> points = {Coordf(it2.x0, it2.y0), Coordf(it2.x1, it2.y2), Coordf(it2.x1, it2.y2)};
                 if (std::isnan(it2.y2)) { // line
                     float width = it2.x2;

@@ -7,7 +7,6 @@ PoolBrowserUnit::PoolBrowserUnit(Pool *p) : PoolBrowser(p)
 {
     construct();
     name_entry = create_search_entry("Name");
-    search();
     install_pool_item_source_tooltip();
 }
 
@@ -21,6 +20,7 @@ void PoolBrowserUnit::create_columns()
     append_column_with_item_source_cr("Unit", list_columns.name);
     treeview->append_column("Manufacturer", list_columns.manufacturer);
     path_column = append_column("Path", list_columns.path, Pango::ELLIPSIZE_START);
+    install_column_tooltip(*path_column, list_columns.path);
 }
 
 void PoolBrowserUnit::add_sort_controller_columns()
@@ -31,9 +31,7 @@ void PoolBrowserUnit::add_sort_controller_columns()
 
 void PoolBrowserUnit::search()
 {
-    auto selected_uuid = get_selected();
-    treeview->unset_model();
-    store->clear();
+    prepare_search();
 
     std::string name_search = name_entry->get_text();
 
@@ -50,18 +48,26 @@ void PoolBrowserUnit::search()
         row[list_columns.uuid] = UUID();
         row[list_columns.name] = "none";
     }
-
-    while (q.step()) {
-        row = *(store->append());
-        row[list_columns.uuid] = q.get<std::string>(0);
-        row[list_columns.name] = q.get<std::string>(1);
-        row[list_columns.manufacturer] = q.get<std::string>(2);
-        row[list_columns.path] = q.get<std::string>(3);
-        row[list_columns.source] = pool_item_source_from_db(q.get<std::string>(4), q.get<int>(5));
+    try {
+        while (q.step()) {
+            row = *(store->append());
+            row[list_columns.uuid] = q.get<std::string>(0);
+            row[list_columns.name] = q.get<std::string>(1);
+            row[list_columns.manufacturer] = q.get<std::string>(2);
+            row[list_columns.path] = q.get<std::string>(3);
+            row[list_columns.source] = pool_item_source_from_db(q.get<std::string>(4), q.get<int>(5));
+        }
+        set_busy(false);
     }
-    treeview->set_model(store);
-    select_uuid(selected_uuid);
-    scroll_to_selection();
+    catch (SQLite::Error &e) {
+        if (e.rc == SQLITE_BUSY) {
+            set_busy(true);
+        }
+        else {
+            throw;
+        }
+    }
+    finish_search();
 }
 
 UUID PoolBrowserUnit::uuid_from_row(const Gtk::TreeModel::Row &row)

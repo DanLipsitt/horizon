@@ -158,12 +158,18 @@ static unsigned int codepoint_to_hershey(gunichar c, TextData::Font font)
         case 0x2126: // U+2126 OHM SIGN
         case 0x3a9:  // U+03A9 GREEK CAPITAL LETTER OMEGA
             return 550;
+        case 0x3d1: // U+03D1 GREEK THETA SYMBOL
+            return 634;
         case 0xd7: // U+00D7 MULTIPLICATION SIGN
             return 727;
         case 0xa0: // U+00A0 NO-BREAK SPACE
             return codepoint_to_hershey(' ', font);
         case 0x1F384: // U+1F384 CHRISTMAS TREE
             return 871;
+        case 0xb0: // U+00B0 DEGREE SIGN
+            return 718;
+        case 0xb1: // U+00B1 PLUS MINUS SIGN
+            return 2233;
         default:
             return 870; // palm tree
         }

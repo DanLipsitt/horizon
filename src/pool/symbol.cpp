@@ -45,9 +45,9 @@ json SymbolPin::Decoration::serialize() const
 }
 
 SymbolPin::SymbolPin(const UUID &uu, const json &j)
-    : uuid(uu), position(j["position"].get<std::vector<int64_t>>()), length(j["length"]),
+    : uuid(uu), position(j.at("position").get<std::vector<int64_t>>()), length(j.at("length")),
       name_visible(j.value("name_visible", true)), pad_visible(j.value("pad_visible", true)),
-      orientation(orientation_lut.lookup(j["orientation"]))
+      orientation(orientation_lut.lookup(j.at("orientation")))
 {
     if (j.count("decoration")) {
         decoration = Decoration(j.at("decoration"));
@@ -201,7 +201,7 @@ Symbol::Symbol(const UUID &uu) : uuid(uu)
 Symbol Symbol::new_from_file(const std::string &filename, Pool &pool)
 {
     auto j = load_json_from_file(filename);
-    return Symbol(UUID(j["uuid"].get<std::string>()), j, pool);
+    return Symbol(UUID(j.at("uuid").get<std::string>()), j, pool);
 }
 
 Junction *Symbol::get_junction(const UUID &uu)
@@ -253,7 +253,7 @@ void Symbol::operator=(Symbol const &sym)
     update_refs();
 }
 
-void Symbol::expand()
+void Symbol::expand(PinDisplayMode mode)
 {
     std::vector<UUID> keys;
     keys.reserve(pins.size());
@@ -264,7 +264,21 @@ void Symbol::expand()
         if (unit->pins.count(uu)) {
             SymbolPin &p = pins.at(uu);
             p.pad = "$PAD";
-            p.name = unit->pins.at(uu).primary_name;
+            switch (mode) {
+            case PinDisplayMode::PRIMARY:
+                p.name = unit->pins.at(uu).primary_name;
+                break;
+            case PinDisplayMode::ALT:
+            case PinDisplayMode::BOTH:
+                p.name = "";
+                for (auto &pin_name : unit->pins.at(uu).names) {
+                    p.name += pin_name + " ";
+                }
+                if (mode == PinDisplayMode::BOTH) {
+                    p.name += "(" + unit->pins.at(uu).primary_name + ")";
+                }
+                break;
+            }
             p.direction = unit->pins.at(uu).direction;
         }
         else {

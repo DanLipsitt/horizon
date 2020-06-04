@@ -2,6 +2,7 @@
 #include "pool/pool_parametric.hpp"
 #include "pool/pool.hpp"
 #include "pool/part.hpp"
+#include <sstream>
 
 namespace horizon {
 
@@ -29,6 +30,7 @@ PoolUpdaterParametric::PoolUpdaterParametric(const std::string &pool_base_path, 
     : pool(pool_base_path), pool_parametric(pool_base_path, false), tables(pool_parametric.get_tables()),
       base_path(pool_base_path), status_cb(cb)
 {
+    pool_parametric.db.execute("PRAGMA journal_mode=WAL");
 }
 
 void PoolUpdaterParametric::update()

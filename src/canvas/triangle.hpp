@@ -2,8 +2,7 @@
 #include "common/common.hpp"
 #include "util/uuid.hpp"
 #include "color_palette.hpp"
-#include <epoxy/gl.h>
-#include <unordered_map>
+#include "util/gl_inc.h"
 
 namespace horizon {
 class ObjectRef {
@@ -61,6 +60,7 @@ public:
     static const int FLAG_HIDDEN = 1 << 0;
     static const int FLAG_HIGHLIGHT = 1 << 1;
     static const int FLAG_BUTT = 1 << 2;
+    static const int FLAG_GLYPH = 1 << 3;
 
     Triangle(const Coordf &p0, const Coordf &p1, const Coordf &p2, ColorP co, Type ty, uint8_t flg = 0,
              uint8_t ilod = 0)
@@ -74,7 +74,7 @@ class TriangleRenderer {
     friend class CanvasGL;
 
 public:
-    TriangleRenderer(class CanvasGL *c, std::unordered_map<int, std::vector<Triangle>> &tris);
+    TriangleRenderer(class CanvasGL *c, std::map<int, std::vector<Triangle>> &tris);
     void realize();
     void render();
     void push();
@@ -83,21 +83,24 @@ public:
 private:
     CanvasGL *ca;
     enum class Type { TRIANGLE, LINE, LINE0, LINE_BUTT, GLYPH };
-    std::unordered_map<int, std::vector<Triangle>> &triangles;
-    std::unordered_map<int, std::map<std::pair<Type, bool>, std::pair<size_t, size_t>>> layer_offsets;
+    std::map<int, std::vector<Triangle>> &triangles;
+    std::map<int, std::map<std::pair<Type, bool>, std::pair<size_t, size_t>>> layer_offsets;
     size_t n_tris = 0;
 
     GLuint program_line0;
     GLuint program_line;
     GLuint program_line_butt;
     GLuint program_triangle;
+    GLuint program_glyph;
     GLuint vao;
     GLuint vbo;
     GLuint ubo;
     GLuint ebo;
+    GLuint texture_glyph;
 
-    void render_layer(int layer, HighlightMode highlight_mode = HighlightMode::ALL);
+    void render_layer(int layer, HighlightMode highlight_mode = HighlightMode::ALL, bool ignore_flip = false);
     void render_layer_with_overlay(int layer, HighlightMode highlight_mode = HighlightMode::ALL);
+    void render_annotations(bool top);
     int stencil = 0;
 };
 } // namespace horizon

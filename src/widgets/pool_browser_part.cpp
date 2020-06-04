@@ -5,7 +5,7 @@
 #include <set>
 
 namespace horizon {
-PoolBrowserPart::PoolBrowserPart(Pool *p, const UUID &uu) : PoolBrowser(p), entity_uuid(uu)
+PoolBrowserPart::PoolBrowserPart(Pool *p, const UUID &uu) : PoolBrowserStockinfo(p), entity_uuid(uu)
 {
     construct();
     MPN_entry = create_search_entry("MPN");
@@ -14,7 +14,6 @@ PoolBrowserPart::PoolBrowserPart(Pool *p, const UUID &uu) : PoolBrowser(p), enti
     tag_entry = create_tag_entry("Tags");
 
     install_pool_item_source_tooltip();
-    search();
 }
 
 void PoolBrowserPart::set_MPN(const std::string &s)
@@ -51,6 +50,7 @@ void PoolBrowserPart::create_columns()
         auto col = append_column("Description", list_columns.description, Pango::ELLIPSIZE_END);
         col->set_resizable(true);
         col->set_min_width(100);
+        install_column_tooltip(*col, list_columns.description);
     }
     {
         auto col = append_column("Package", list_columns.package, Pango::ELLIPSIZE_END);
@@ -61,8 +61,10 @@ void PoolBrowserPart::create_columns()
         auto col = append_column("Tags", list_columns.tags, Pango::ELLIPSIZE_END);
         col->set_resizable(true);
         col->set_min_width(100);
+        install_column_tooltip(*col, list_columns.tags);
     }
     path_column = append_column("Path", list_columns.path, Pango::ELLIPSIZE_START);
+    install_column_tooltip(*path_column, list_columns.path);
 }
 
 void PoolBrowserPart::add_sort_controller_columns()
@@ -74,9 +76,8 @@ void PoolBrowserPart::add_sort_controller_columns()
 
 void PoolBrowserPart::search()
 {
-    auto selected_uuid = get_selected();
-    treeview->unset_model();
-    store->clear();
+    prepare_search();
+    iter_cache.clear();
     Gtk::TreeModel::Row row;
     std::string MPN_search = MPN_entry->get_text();
     std::string manufacturer_search = manufacturer_entry->get_text();
@@ -135,17 +136,32 @@ void PoolBrowserPart::search()
         row[list_columns.manufacturer] = "none";
         row[list_columns.package] = "none";
     }
-
-    while (q.step()) {
-        row = *(store->append());
-        row[list_columns.uuid] = q.get<std::string>(0);
-        row[list_columns.MPN] = q.get<std::string>(1);
-        row[list_columns.manufacturer] = q.get<std::string>(2);
-        row[list_columns.package] = q.get<std::string>(3);
-        row[list_columns.tags] = q.get<std::string>(4);
-        row[list_columns.path] = q.get<std::string>(5);
-        row[list_columns.description] = q.get<std::string>(6);
-        row[list_columns.source] = pool_item_source_from_db(q.get<std::string>(7), q.get<int>(8));
+    std::list<UUID> uuids;
+    try {
+        while (q.step()) {
+            auto iter = store->append();
+            row = *iter;
+            UUID uu(q.get<std::string>(0));
+            uuids.push_back(uu);
+            iter_cache.emplace(uu, iter);
+            row[list_columns.uuid] = uu;
+            row[list_columns.MPN] = q.get<std::string>(1);
+            row[list_columns.manufacturer] = q.get<std::string>(2);
+            row[list_columns.package] = q.get<std::string>(3);
+            row[list_columns.tags] = q.get<std::string>(4);
+            row[list_columns.path] = q.get<std::string>(5);
+            row[list_columns.description] = q.get<std::string>(6);
+            row[list_columns.source] = pool_item_source_from_db(q.get<std::string>(7), q.get<int>(8));
+        }
+        set_busy(false);
+    }
+    catch (SQLite::Error &e) {
+        if (e.rc == SQLITE_BUSY) {
+            set_busy(true);
+        }
+        else {
+            throw;
+        }
     }
     /*
     SQLite::Query q2(pool->db, "EXPLAIN QUERY PLAN " + query.str());
@@ -155,9 +171,9 @@ void PoolBrowserPart::search()
     }
     */
 
-    treeview->set_model(store);
-    select_uuid(selected_uuid);
-    scroll_to_selection();
+    finish_search();
+    if (stock_info_provider)
+        stock_info_provider->update_parts(uuids);
 }
 
 UUID PoolBrowserPart::uuid_from_row(const Gtk::TreeModel::Row &row)
@@ -176,6 +192,11 @@ void PoolBrowserPart::add_copy_name_context_menu_item()
         auto clip = Gtk::Clipboard::get();
         clip->set_text(part->get_MPN());
     });
+}
+
+Gtk::TreeModelColumn<std::shared_ptr<StockInfoRecord>> &PoolBrowserPart::get_stock_info_column()
+{
+    return list_columns.stock_info;
 }
 
 } // namespace horizon

@@ -22,12 +22,11 @@ public:
 
 private:
     PoolProjectManagerAppWindow *win = nullptr;
-    Gtk::Entry *project_name_entry = nullptr;
-    Gtk::Entry *project_description_entry = nullptr;
     Gtk::FileChooserButton *project_path_chooser = nullptr;
     Gtk::Label *project_dir_label = nullptr;
     Gtk::ComboBoxText *project_pool_combo = nullptr;
-
+    std::map<std::string, std::string> meta_values;
+    class ProjectMetaEditor *meta_editor = nullptr;
 
     type_signal_valid_change s_signal_valid_change;
 };
@@ -35,12 +34,19 @@ private:
 class PoolProjectManagerViewProject {
 public:
     PoolProjectManagerViewProject(const Glib::RefPtr<Gtk::Builder> &refBuilder, class PoolProjectManagerAppWindow *w);
-    Gtk::Entry *entry_project_title = nullptr;
+    Gtk::Label *label_project_title = nullptr;
+    Gtk::Label *label_project_author = nullptr;
     Gtk::Label *label_pool_name = nullptr;
     Gtk::Label *label_pool_path = nullptr;
     Gtk::Label *label_project_directory = nullptr;
     Gtk::InfoBar *pool_info_bar = nullptr;
     Gtk::Label *pool_info_bar_label = nullptr;
+
+    void open_top_schematic();
+    void open_board();
+    bool update_meta();
+    void update_pool_cache_status(const class PoolCacheStatus &status);
+    void reset_pool_cache_status();
 
 private:
     PoolProjectManagerAppWindow *win = nullptr;
@@ -49,9 +55,9 @@ private:
     Gtk::Button *button_part_browser = nullptr;
     Gtk::Button *button_pool_cache = nullptr;
     Gtk::Button *button_change_pool = nullptr;
+    Gtk::Label *pool_cache_status_label = nullptr;
 
-    void handle_button_top_schematic();
-    void handle_button_board();
+
     void handle_button_part_browser();
     void handle_button_pool_cache();
     void handle_button_change_pool();

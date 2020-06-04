@@ -11,7 +11,7 @@
 namespace horizon {
 using json = nlohmann::json;
 
-enum class RulesCheckErrorLevel { NOT_RUN, PASS, WARN, FAIL };
+enum class RulesCheckErrorLevel { NOT_RUN, PASS, WARN, FAIL, DISABLED };
 
 Color rules_check_error_level_to_color(RulesCheckErrorLevel lev);
 std::string rules_check_error_level_to_string(RulesCheckErrorLevel lev);
@@ -26,12 +26,15 @@ public:
     std::string comment;
     bool has_location = false;
     ClipperLib::Paths error_polygons;
+
+    json serialize() const;
 };
 
 class RulesCheckResult {
 public:
     void clear();
     void update();
+    json serialize() const;
 
     RulesCheckErrorLevel level = RulesCheckErrorLevel::NOT_RUN;
     std::string comment;

@@ -1,21 +1,22 @@
 #pragma once
-#include "core/core_package.hpp"
 #include <gtkmm.h>
+#include "pool/package.hpp"
 extern "C" {
 #include "footag/footag.h"
 }
 namespace horizon {
 class FootagDisplay : public Gtk::Box {
 public:
-    FootagDisplay(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder> &x, CorePackage *c, enum footag_type type);
-    static FootagDisplay *create(CorePackage *c, enum footag_type type);
+    FootagDisplay(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder> &x, class IDocumentPackage *c,
+                  enum footag_type type);
+    static FootagDisplay *create(IDocumentPackage *c, enum footag_type type);
 
     ~FootagDisplay() override;
     bool generate();
     bool isopen();
 
 private:
-    CorePackage *core;
+    IDocumentPackage *core;
     Gtk::Label *reference_label = nullptr;
     Gtk::Label *reference_title = nullptr;
     Gtk::CheckButton *autofit;
@@ -29,6 +30,7 @@ private:
     void calc_and_display();
     void calc(Package *pkg, const struct footag_spec *s);
     void display();
+    Gtk::Allocation old_alloc;
     void help(const struct footag_param *p);
 };
 } // namespace horizon

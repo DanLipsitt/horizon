@@ -30,6 +30,7 @@ private:
     Gtk::CheckButton *diff_show_deleted_checkbutton = nullptr;
     Gtk::CheckButton *diff_show_modified_checkbutton = nullptr;
     Gtk::Box *diff_box = nullptr;
+    Gtk::Button *add_with_deps_button = nullptr;
 
     void make_treeview(Gtk::TreeView *treeview);
 
@@ -57,8 +58,11 @@ private:
 
     Glib::RefPtr<Gtk::ListStore> diff_store;
     Glib::RefPtr<Gtk::TreeModelFilter> diff_store_filtered;
+    Glib::RefPtr<Gtk::TreeModelSort> diff_store_sorted;
 
     Glib::RefPtr<Gtk::ListStore> status_store;
+    Glib::RefPtr<Gtk::TreeModelSort> status_store_sorted;
+    void install_sort(Glib::RefPtr<Gtk::TreeSortable> store);
 
     static int diff_file_cb_c(const git_diff_delta *delta, float progress, void *pl);
     static int status_cb_c(const char *path, unsigned int status_flags, void *payload);
@@ -67,5 +71,6 @@ private:
 
     void update_store_from_db_prepare();
     void update_store_from_db(Glib::RefPtr<Gtk::ListStore> store);
+    void handle_add_with_deps();
 };
 } // namespace horizon

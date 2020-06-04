@@ -42,9 +42,8 @@ static GLuint create_vao(GLuint program)
 
 void Grid::realize()
 {
-    program =
-            gl_create_program_from_resource("/net/carrotIndustries/horizon/canvas/shaders/grid-vertex.glsl",
-                                            "/net/carrotIndustries/horizon/canvas/shaders/grid-fragment.glsl", nullptr);
+    program = gl_create_program_from_resource("/org/horizon-eda/horizon/canvas/shaders/grid-vertex.glsl",
+                                              "/org/horizon-eda/horizon/canvas/shaders/grid-fragment.glsl", nullptr);
     vao = create_vao(program);
 
     GET_LOC(this, screenmat);
@@ -86,10 +85,10 @@ void Grid::render()
     }
 
     Coord<float> grid_0;
-    grid_0.x =
-            (round((ca->flip_view ? -1 : 1) * (-(ca->offset.x - (ca->flip_view ? ca->width : 0)) / ca->scale) / sp) - 1)
-            * sp;
-    grid_0.y = (round((-(ca->height - ca->offset.y) / ca->scale) / sp) - 1) * sp;
+    grid_0.x = (round((ca->flip_view ? -1 : 1) * (-(ca->offset.x - (ca->flip_view ? ca->m_width : 0)) / ca->scale) / sp)
+                - 1)
+               * sp;
+    grid_0.y = (round((-(ca->m_height - ca->offset.y) / ca->scale) / sp) - 1) * sp;
 
     if (mul != newmul) {
         mul = newmul;
@@ -100,20 +99,20 @@ void Grid::render()
     glUniform2f(grid_0_loc, grid_0.x, grid_0.y);
     glLineWidth(grid_line_width);
     if (mark_size > 100) {
-        glUniform1f(mark_size_loc, ca->height * 2);
-        int n = (ca->width / ca->scale) / sp + 4;
+        glUniform1f(mark_size_loc, ca->m_height * 2);
+        int n = (ca->m_width / ca->scale) / sp + 4;
         glUniform1i(grid_mod_loc, n + 1);
         glDrawArraysInstanced(GL_LINES, 0, 2, n);
 
-        glUniform1f(mark_size_loc, ca->width * 2);
-        n = (ca->height / ca->scale) / sp + 4;
+        glUniform1f(mark_size_loc, ca->m_width * 2);
+        n = (ca->m_height / ca->scale) / sp + 4;
         glUniform1i(grid_mod_loc, 1);
         glDrawArraysInstanced(GL_LINES, 2, 2, n);
     }
     else {
-        int mod = (ca->width / ca->scale) / sp + 4;
+        int mod = (ca->m_width / ca->scale) / sp + 4;
         glUniform1i(grid_mod_loc, mod);
-        int n = mod * ((ca->height / ca->scale) / sp + 4);
+        int n = mod * ((ca->m_height / ca->scale) / sp + 4);
         glDrawArraysInstanced(GL_LINES, 0, 4, n);
     }
 
@@ -144,7 +143,7 @@ void Grid::render_cursor(Coord<int64_t> &coord)
     if (ca->cursor_size > 0)
         glUniform1f(mark_size_loc, ca->cursor_size);
     else
-        glUniform1f(mark_size_loc, std::max(ca->width, ca->height));
+        glUniform1f(mark_size_loc, std::max(ca->m_width, ca->m_height));
 
     glUniform1f(grid_size_loc, 0);
     glUniform2f(grid_0_loc, coord.x, coord.y);

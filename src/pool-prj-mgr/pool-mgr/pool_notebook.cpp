@@ -19,6 +19,7 @@
 #include "pool/pool_manager.hpp"
 #include "pool/pool_parametric.hpp"
 #include "part_wizard/part_wizard.hpp"
+#include "widgets/part_preview.hpp"
 #include <thread>
 #include "nlohmann/json.hpp"
 
@@ -37,27 +38,52 @@ void PoolNotebook::pool_updated(bool success)
         dia.run();
     }
     appwin->set_pool_updating(false, success);
+    reload();
+    if (success && pool_update_done_cb) {
+        pool_update_done_cb();
+        pool_update_done_cb = nullptr;
+    }
+    if (success)
+        Glib::RefPtr<PoolProjectManagerApplication>::cast_dynamic(appwin->get_application())
+                ->signal_pool_updated()
+                .emit(pool_uuid);
+}
+
+void PoolNotebook::reload()
+{
     pool.clear();
     for (auto &br : browsers) {
-        br.second->search();
+        if (widget_is_visible(br.second))
+            br.second->search();
+        else
+            br.second->clear_search_once();
     }
     for (auto &br : browsers_parametric) {
-        br.second->search();
+        if (widget_is_visible(br.second))
+            br.second->search();
+        else
+            br.second->clear_search_once();
     }
     auto procs = appwin->get_processes();
     for (auto &it : procs) {
         it.second->reload();
     }
-    if (success && pool_update_done_cb) {
-        pool_update_done_cb();
-        pool_update_done_cb = nullptr;
-    }
     if (settings_box)
         settings_box->pool_updated();
     if (part_wizard)
         part_wizard->reload();
-    if (git_box && success && git_box->refreshed_once)
-        git_box->refresh();
+    if (git_box && git_box->refreshed_once) {
+        if (widget_is_visible(git_box))
+            git_box->refresh();
+        else
+            git_box->refreshed_once = false;
+    }
+}
+
+bool PoolNotebook::widget_is_visible(Gtk::Widget *widget)
+{
+    auto page = get_nth_page(get_current_page());
+    return widget == page || widget->is_ancestor(*page);
 }
 
 PoolNotebook::~PoolNotebook()
@@ -131,13 +157,16 @@ PoolNotebook::PoolNotebook(const std::string &bp, class PoolProjectManagerAppWin
 {
     appwin->pool = &pool;
     appwin->pool_parametric = &pool_parametric;
-    appwin->signal_process_exited().connect(sigc::track_obj(
-            [this](std::string filename, int status, bool modified) {
+
+    appwin->signal_process_saved().connect(sigc::track_obj(
+            [this](std::string filename) {
                 auto in_pool = Gio::File::create_for_path(base_path)
                                        ->get_relative_path(Gio::File::create_for_path(filename))
                                        .size();
-                if (modified && in_pool)
+                if (in_pool)
                     pool_update(nullptr, {filename});
+                else
+                    reload();
             },
             *this));
 
@@ -240,7 +269,26 @@ PoolNotebook::PoolNotebook(const std::string &bp, class PoolProjectManagerAppWin
         br->show();
         add_context_menu(br);
         br->signal_activated().connect([this, br] { go_to(ObjectType::PART, br->get_selected()); });
-        append_page(*br, "Param: " + it_tab.second.display_name);
+        auto paned = Gtk::manage(new Gtk::Paned(Gtk::ORIENTATION_HORIZONTAL));
+        paned->add1(*br);
+        paned->child_property_shrink(*br) = false;
+
+        auto preview = Gtk::manage(new PartPreview(pool));
+        preview->signal_goto().connect(sigc::mem_fun(*this, &PoolNotebook::go_to));
+        br->signal_selected().connect([this, br, preview] {
+            auto sel = br->get_selected();
+            if (!sel) {
+                preview->load(nullptr);
+                return;
+            }
+            auto part = pool.get_part(sel);
+            preview->load(part);
+        });
+        paned->add2(*preview);
+        paned->show_all();
+
+        append_page(*paned, "Param: " + it_tab.second.display_name);
+        install_search_once(paned, br);
         browsers_parametric.emplace(it_tab.first, br);
     }
 
@@ -264,22 +312,6 @@ void PoolNotebook::add_context_menu(PoolBrowser *br)
         auto filename = pool.get_filename(ty, uu);
         pool_update(nullptr, {filename});
     });
-}
-
-void rmdir_recursive(const std::string &dirname)
-{
-    Glib::Dir dir(dirname);
-    std::list<std::string> entries(dir.begin(), dir.end());
-    for (const auto &it : entries) {
-        auto filename = Glib::build_filename(dirname, it);
-        if (Glib::file_test(filename, Glib::FILE_TEST_IS_DIR)) {
-            rmdir_recursive(filename);
-        }
-        else {
-            Gio::File::create_for_path(filename)->remove();
-        }
-    }
-    Gio::File::create_for_path(dirname)->remove();
 }
 
 void PoolNotebook::handle_delete(ObjectType ty, const UUID &uu)
@@ -313,8 +345,8 @@ void PoolNotebook::go_to(ObjectType type, const UUID &uu)
 {
     browsers.at(type)->go_to(uu);
     static const std::map<ObjectType, int> pages = {
-            {ObjectType::UNIT, 0},     {ObjectType::SYMBOL, 1},  {ObjectType::ENTITY, 2},
-            {ObjectType::PADSTACK, 3}, {ObjectType::PACKAGE, 4}, {ObjectType::PART, 5},
+            {ObjectType::UNIT, 0},    {ObjectType::SYMBOL, 1}, {ObjectType::ENTITY, 2}, {ObjectType::PADSTACK, 3},
+            {ObjectType::PACKAGE, 4}, {ObjectType::PART, 5},   {ObjectType::FRAME, 6},
     };
     set_current_page(pages.at(type));
 }
@@ -347,7 +379,7 @@ void PoolNotebook::show_duplicate_window(ObjectType ty, const UUID &uu)
 
 bool PoolNotebook::get_close_prohibited() const
 {
-    return part_wizard || pool_updating || duplicate_window;
+    return part_wizard || pool_updating || duplicate_window || kicad_symbol_import_wizard;
 }
 
 void PoolNotebook::prepare_close()
@@ -440,4 +472,17 @@ void PoolNotebook::pool_update(std::function<void()> cb, const std::vector<std::
     std::thread thr(&PoolNotebook::pool_update_thread, this);
     thr.detach();
 }
+
+void PoolNotebook::install_search_once(Gtk::Widget *widget, PoolBrowser *browser)
+{
+    signal_switch_page().connect(sigc::track_obj(
+            [this, widget, browser](Gtk::Widget *page, guint page_num) {
+                if (in_destruction())
+                    return;
+                if (page == widget)
+                    browser->search_once();
+            },
+            *widget, *browser));
+}
+
 } // namespace horizon

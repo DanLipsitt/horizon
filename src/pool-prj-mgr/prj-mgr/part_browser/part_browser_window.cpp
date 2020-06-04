@@ -3,6 +3,16 @@
 #include "widgets/part_preview.hpp"
 #include "widgets/pool_browser_part.hpp"
 #include "widgets/pool_browser_parametric.hpp"
+#include "util/stock_info_provider_partinfo.hpp"
+#include "preferences/preferences_provider.hpp"
+#ifdef G_OS_WIN32
+#undef ERROR
+#undef DELETE
+#undef DUPLICATE
+#endif
+#include "preferences/preferences.hpp"
+#include "util/gtk_util.hpp"
+#include "pool-prj-mgr/prj-mgr/pool_cache_status.hpp"
 
 namespace horizon {
 
@@ -32,7 +42,8 @@ PartBrowserWindow::PartBrowserWindow(BaseObjectType *cobject, const Glib::RefPtr
     x->get_widget("fav_button", fav_button);
     x->get_widget("lb_favorites", lb_favorites);
     x->get_widget("lb_recent", lb_recent);
-    x->get_widget("paned", paned);
+    x->get_widget("out_of_date_info_bar", out_of_date_info_bar);
+    info_bar_hide(out_of_date_info_bar);
 
     lb_favorites->set_header_func(sigc::ptr_fun(header_fun));
     lb_recent->set_header_func(sigc::ptr_fun(header_fun));
@@ -42,15 +53,28 @@ PartBrowserWindow::PartBrowserWindow(BaseObjectType *cobject, const Glib::RefPtr
     lb_recent->signal_row_activated().connect(sigc::mem_fun(*this, &PartBrowserWindow::handle_favorites_activated));
 
     {
+        Gtk::Button *pool_cache_button;
+        x->get_widget("pool_cache_button", pool_cache_button);
+        pool_cache_button->signal_clicked().connect(
+                [this] { s_signal_open_pool_cache_window.emit(items_out_of_date); });
+    }
+
+    {
         auto la = Gtk::manage(new Gtk::MenuItem("MPN Search"));
-        la->signal_activate().connect([this] { add_search(); });
+        la->signal_activate().connect([this] {
+            auto ch = add_search();
+            ch->search_once();
+        });
         la->show();
         add_search_menu->append(*la);
     }
     for (const auto &it : pool_parametric.get_tables()) {
         auto la = Gtk::manage(new Gtk::MenuItem(it.second.display_name));
         std::string table_name = it.first;
-        la->signal_activate().connect([this, table_name] { add_search_parametric(table_name); });
+        la->signal_activate().connect([this, table_name] {
+            auto ch = add_search_parametric(table_name);
+            ch->search_once();
+        });
         la->show();
         add_search_menu->append(*la);
     }
@@ -61,7 +85,11 @@ PartBrowserWindow::PartBrowserWindow(BaseObjectType *cobject, const Glib::RefPtr
     assign_part_button->signal_clicked().connect(sigc::mem_fun(*this, &PartBrowserWindow::handle_assign_part));
 
     preview = Gtk::manage(new PartPreview(pool, false));
-    paned->add2(*preview);
+    {
+        Gtk::Box *box;
+        x->get_widget("box", box);
+        box->pack_start(*preview, true, true, 0);
+    }
     preview->show();
 
     update_part_current();
@@ -72,6 +100,7 @@ PartBrowserWindow::PartBrowserWindow(BaseObjectType *cobject, const Glib::RefPtr
         add_search_parametric(it.first);
     }
     notebook->set_current_page(notebook->page_num(*ch_search));
+    signal_show().connect(sigc::track_obj([this, ch_search] { ch_search->search_once(); }, *ch_search));
 }
 
 void PartBrowserWindow::handle_favorites_selected(Gtk::ListBoxRow *row)
@@ -136,15 +165,17 @@ void PartBrowserWindow::go_to_part(const UUID &uu)
     auto br = dynamic_cast<PoolBrowserPart *>(page);
     if (br)
         br->go_to(uu);
-    else
-        add_search(uu);
+    else {
+        auto br_new = add_search(uu);
+        br_new->search_once();
+    }
 }
 
 void PartBrowserWindow::update_favorites()
 {
     auto children = lb_favorites->get_children();
     for (auto it : children) {
-        lb_favorites->remove(*it);
+        delete it;
     }
 
     for (const auto &it : favorites) {
@@ -182,7 +213,7 @@ void PartBrowserWindow::update_recents()
 {
     auto children = lb_recent->get_children();
     for (auto it : children) {
-        lb_recent->remove(*it);
+        delete it;
     }
 
     for (const auto &it : recents) {
@@ -254,10 +285,50 @@ void PartBrowserWindow::update_part_current()
     assign_part_button->set_sensitive(part_current && can_assign);
     fav_button->set_sensitive(part_current);
     if (part_current) {
-        preview->load(pool.get_part(part_current));
+        auto part = pool.get_part(part_current);
+        preview->load(part);
     }
     else {
         preview->load(nullptr);
+    }
+    update_out_of_date_info_bar();
+}
+
+void PartBrowserWindow::set_pool_cache_status(const PoolCacheStatus &st)
+{
+    pool_cache_status = &st;
+    update_out_of_date_info_bar();
+}
+
+void PartBrowserWindow::update_out_of_date_info_bar()
+{
+    info_bar_hide(out_of_date_info_bar);
+    items_out_of_date.clear();
+    if (!part_current || !pool_cache_status) {
+        return;
+    }
+    SQLite::Query q(pool.db,
+                    "WITH RECURSIVE deps(typex, uuidx) AS "
+                    "( SELECT 'part', ? UNION "
+                    "SELECT dep_type, dep_uuid FROM dependencies, deps "
+                    "WHERE dependencies.type = deps.typex AND dependencies.uuid = deps.uuidx) "
+                    "SELECT * FROM deps UNION SELECT 'symbol', symbols.uuid FROM symbols "
+                    "INNER JOIN deps ON (symbols.unit = uuidx AND typex = 'unit')");
+    q.bind(1, part_current);
+    while (q.step()) {
+        ObjectType type = object_type_lut.lookup(q.get<std::string>(0));
+        UUID uu(q.get<std::string>(1));
+
+        auto r = std::find_if(pool_cache_status->items.begin(), pool_cache_status->items.end(),
+                              [type, uu](const PoolCacheStatus::Item &it) { return it.type == type && it.uuid == uu; });
+        if (r != pool_cache_status->items.end()) {
+            if (r->state == PoolCacheStatus::Item::State::OUT_OF_DATE) {
+                items_out_of_date.emplace(type, uu);
+            }
+        }
+    }
+    if (items_out_of_date.size()) {
+        info_bar_show(out_of_date_info_bar);
     }
 }
 
@@ -270,13 +341,18 @@ void PartBrowserWindow::set_can_assign(bool v)
 PoolBrowserPart *PartBrowserWindow::add_search(const UUID &part)
 {
     auto ch = Gtk::manage(new PoolBrowserPart(&pool));
+    if (PreferencesProvider::get_prefs().partinfo.is_enabled()) {
+        auto prv = std::make_unique<StockInfoProviderPartinfo>(pool.get_base_path());
+        ch->add_stock_info_provider(std::move(prv));
+    }
     ch->get_style_context()->add_class("background");
     auto tab_label = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
     auto la = Gtk::manage(new Gtk::Label("MPN Search"));
+    la->set_xalign(1);
     auto close_button = Gtk::manage(new Gtk::Button());
     close_button->set_relief(Gtk::RELIEF_NONE);
     close_button->set_image_from_icon_name("window-close-symbolic");
-    close_button->signal_clicked().connect([this, ch] { notebook->remove(*ch); });
+    close_button->signal_clicked().connect([this, ch] { delete ch; });
     tab_label->pack_start(*close_button, false, false, 0);
     tab_label->pack_start(*la, true, true, 0);
     ch->show_all();
@@ -292,17 +368,22 @@ PoolBrowserPart *PartBrowserWindow::add_search(const UUID &part)
     return ch;
 }
 
-void PartBrowserWindow::add_search_parametric(const std::string &table_name)
+PoolBrowserParametric *PartBrowserWindow::add_search_parametric(const std::string &table_name)
 {
     auto ch = Gtk::manage(new PoolBrowserParametric(&pool, &pool_parametric, table_name));
+    if (PreferencesProvider::get_prefs().partinfo.is_enabled()) {
+        auto prv = std::make_unique<StockInfoProviderPartinfo>(pool.get_base_path());
+        ch->add_stock_info_provider(std::move(prv));
+    }
     ch->add_copy_name_context_menu_item();
     ch->get_style_context()->add_class("background");
     auto tab_label = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
     auto la = Gtk::manage(new Gtk::Label(pool_parametric.get_tables().at(table_name).display_name));
+    la->set_xalign(1);
     auto close_button = Gtk::manage(new Gtk::Button());
     close_button->set_relief(Gtk::RELIEF_NONE);
     close_button->set_image_from_icon_name("window-close-symbolic");
-    close_button->signal_clicked().connect([this, ch] { notebook->remove(*ch); });
+    close_button->signal_clicked().connect([this, ch] { delete ch; });
     tab_label->pack_start(*close_button, false, false, 0);
     tab_label->pack_start(*la, true, true, 0);
     ch->show_all();
@@ -313,6 +394,16 @@ void PartBrowserWindow::add_search_parametric(const std::string &table_name)
     search_views.insert(ch);
     ch->signal_selected().connect(sigc::mem_fun(*this, &PartBrowserWindow::update_part_current));
     ch->signal_activated().connect(sigc::mem_fun(*this, &PartBrowserWindow::handle_place_part));
+
+    notebook->signal_switch_page().connect(sigc::track_obj(
+            [this, ch](Gtk::Widget *page, guint pagenum) {
+                if (notebook->in_destruction())
+                    return;
+                if (page == ch)
+                    ch->search_once();
+            },
+            *ch));
+    return ch;
 }
 
 PartBrowserWindow *PartBrowserWindow::create(Gtk::Window *p, const std::string &pool_path, std::deque<UUID> &favs)
@@ -320,7 +411,7 @@ PartBrowserWindow *PartBrowserWindow::create(Gtk::Window *p, const std::string &
     PartBrowserWindow *w;
     Glib::RefPtr<Gtk::Builder> x = Gtk::Builder::create();
     x->add_from_resource(
-            "/net/carrotIndustries/horizon/pool-prj-mgr/prj-mgr/part_browser/"
+            "/org/horizon-eda/horizon/pool-prj-mgr/prj-mgr/part_browser/"
             "part_browser.ui");
     x->get_widget_derived("window", w, pool_path, favs);
 

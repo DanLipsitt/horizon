@@ -39,9 +39,9 @@ static GLuint create_vao_box(GLuint program)
 void DragSelection::Box::realize()
 {
     program = gl_create_program_from_resource(
-            "/net/carrotIndustries/horizon/canvas/shaders/"
+            "/org/horizon-eda/horizon/canvas/shaders/"
             "selection-vertex.glsl",
-            "/net/carrotIndustries/horizon/canvas/shaders/"
+            "/org/horizon-eda/horizon/canvas/shaders/"
             "selection-fragment.glsl",
             nullptr);
     vao = create_vao_box(program);
@@ -83,11 +83,11 @@ void DragSelection::Line::create_vao()
 void DragSelection::Line::realize()
 {
     program = gl_create_program_from_resource(
-            "/net/carrotIndustries/horizon/canvas/shaders/"
+            "/org/horizon-eda/horizon/canvas/shaders/"
             "selection-line-vertex.glsl",
-            "/net/carrotIndustries/horizon/canvas/shaders/"
+            "/org/horizon-eda/horizon/canvas/shaders/"
             "selection-line-fragment.glsl",
-            "/net/carrotIndustries/horizon/canvas/shaders/"
+            "/org/horizon-eda/horizon/canvas/shaders/"
             "selection-line-geometry.glsl");
     create_vao();
 
@@ -184,6 +184,11 @@ void DragSelection::drag_begin(GdkEventButton *button_event)
         return;
     if (!ca->selection_allowed)
         return;
+    if (button_event->type == GDK_2BUTTON_PRESS) {
+        active = 0;
+        ca->drag_selection_inhibited = false;
+        return;
+    }
     gdouble x, y;
     gdk_event_get_coords((GdkEvent *)button_event, &x, &y);
     if (button_event->button == 1) { // inside of grid and middle mouse button
@@ -208,7 +213,7 @@ void DragSelection::drag_move(GdkEventMotion *motion_event)
 {
     gdouble x, y;
     gdk_event_get_coords((GdkEvent *)motion_event, &x, &y);
-    if (ca->drag_selection_inhibited) {
+    if (ca->drag_selection_inhibited && active) {
         active = 0;
         return;
     }
@@ -217,18 +222,17 @@ void DragSelection::drag_move(GdkEventMotion *motion_event)
         if (is_line_sel(ca->selection_tool)) {
             if (ABS(sel_o.x - x) > 10 || ABS(sel_o.y - y) > 10) {
                 active = 2;
-                ca->selection_mode = CanvasGL::SelectionMode::NORMAL;
+                ca->set_selection_mode(CanvasGL::SelectionMode::NORMAL);
             }
         }
         else {
             if (ABS(sel_o.x - x) > 10 && ABS(sel_o.y - y) > 10) {
                 active = 2;
-                ca->selection_mode = CanvasGL::SelectionMode::NORMAL;
+                ca->set_selection_mode(CanvasGL::SelectionMode::NORMAL);
             }
         }
     }
-
-    if (active == 2) {
+    else if (active == 2) {
         if (!is_line_sel(ca->selection_tool)) {
             box.sel_b = ca->screen2canvas(Coordf(x, y));
             box.update();
@@ -271,7 +275,7 @@ void DragSelection::drag_end(GdkEventButton *button_event)
             std::cout << "click select" << std::endl;
             if (ca->selection_mode == CanvasGL::SelectionMode::HOVER) { // just select what was
                                                                         // selecte by hover select
-                ca->selection_mode = CanvasGL::SelectionMode::NORMAL;
+                ca->set_selection_mode(CanvasGL::SelectionMode::NORMAL);
                 ca->s_signal_selection_changed.emit();
             }
             else {
@@ -333,6 +337,9 @@ void DragSelection::drag_end(GdkEventButton *button_event)
                             else {
                                 ca->set_selection({sr}, false);
                             }
+#ifdef G_OS_WIN32 // work around a bug(?) in intel(?) GPU drivers on windows
+                            Glib::signal_idle().connect_once([this] { ca->queue_draw(); });
+#endif
                         });
                         la->signal_deselect().connect([this, selection, toggle] {
                             if (toggle) {
@@ -341,6 +348,9 @@ void DragSelection::drag_end(GdkEventButton *button_event)
                             else {
                                 ca->set_selection({}, false);
                             }
+#ifdef G_OS_WIN32 // work around a bug(?) in intel(?) GPU drivers on windows
+                            Glib::signal_idle().connect_once([this] { ca->queue_draw(); });
+#endif
                         });
                         la->signal_activate().connect([this, sr, selection, toggle] {
                             auto sel = selection;

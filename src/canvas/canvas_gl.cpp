@@ -7,6 +7,7 @@
 #include <glm/gtx/matrix_transform_2d.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include "board/board_layers.hpp"
+#include "bitmap_font_util.hpp"
 
 namespace horizon {
 std::pair<float, Coordf> CanvasGL::get_scale_and_offset()
@@ -19,18 +20,19 @@ void CanvasGL::set_scale_and_offset(float sc, Coordf ofs)
     scale = sc;
     offset = ofs;
     update_viewmat();
+    s_signal_scale_changed.emit();
 }
 
 CanvasGL::CanvasGL()
     : Glib::ObjectBase(typeid(CanvasGL)), Canvas::Canvas(), markers(this), grid(this), drag_selection(this),
       selectables_renderer(this, &selectables), triangle_renderer(this, triangles), marker_renderer(this, markers),
-      p_property_work_layer(*this, "work-layer"), p_property_grid_spacing(*this, "grid-spacing"),
-      p_property_layer_opacity(*this, "layer-opacity")
+      picture_renderer(*this), p_property_work_layer(*this, "work-layer"),
+      p_property_grid_spacing(*this, "grid-spacing"), p_property_layer_opacity(*this, "layer-opacity")
 {
     add_events(Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK | Gdk::BUTTON_MOTION_MASK | Gdk::POINTER_MOTION_MASK
                | Gdk::SCROLL_MASK | Gdk::SMOOTH_SCROLL_MASK | Gdk::KEY_PRESS_MASK);
-    width = 1000;
-    height = 500;
+    m_width = 1000;
+    m_height = 500;
 
     set_can_focus(true);
     set_required_version(4, 2);
@@ -48,14 +50,72 @@ CanvasGL::CanvasGL()
 
     update_palette_colors();
     layer_colors = appearance.layer_colors;
+
+    gesture_zoom = Gtk::GestureZoom::create(*this);
+    gesture_zoom->signal_begin().connect(sigc::mem_fun(*this, &CanvasGL::zoom_gesture_begin_cb));
+    gesture_zoom->signal_update().connect(sigc::mem_fun(*this, &CanvasGL::zoom_gesture_update_cb));
+    gesture_zoom->set_propagation_phase(Gtk::PHASE_BUBBLE);
+
+    gesture_drag = Gtk::GestureDrag::create(*this);
+    gesture_drag->signal_begin().connect(sigc::mem_fun(*this, &CanvasGL::drag_gesture_begin_cb));
+    gesture_drag->signal_update().connect(sigc::mem_fun(*this, &CanvasGL::drag_gesture_update_cb));
+    gesture_drag->set_propagation_phase(Gtk::PHASE_BUBBLE);
+    gesture_drag->set_touch_only(true);
+}
+
+void CanvasGL::zoom_gesture_begin_cb(GdkEventSequence *seq)
+{
+    if (pan_dragging) {
+        gesture_zoom->set_state(Gtk::EVENT_SEQUENCE_DENIED);
+        return;
+    }
+    gesture_zoom_scale_orig = scale;
+    gesture_zoom_offset_orig = offset;
+    double cx, cy;
+    gesture_zoom->get_bounding_box_center(cx, cy);
+    gesture_zoom_pos_orig = Coordf(cx, cy);
+    gesture_zoom->set_state(Gtk::EVENT_SEQUENCE_CLAIMED);
+}
+
+void CanvasGL::zoom_gesture_update_cb(GdkEventSequence *seq)
+{
+    auto delta = gesture_zoom->get_scale_delta();
+    double cx, cy;
+    gesture_zoom->get_bounding_box_center(cx, cy);
+    set_scale(cx, cy, gesture_zoom_scale_orig * delta);
+    offset = gesture_zoom_offset_orig + Coordf(cx, cy) - gesture_zoom_pos_orig;
+    update_viewmat();
+    s_signal_scale_changed.emit();
+    queue_draw();
+}
+
+void CanvasGL::drag_gesture_begin_cb(GdkEventSequence *seq)
+{
+    inhibit_drag_selection();
+    if (pan_dragging) {
+        gesture_drag->set_state(Gtk::EVENT_SEQUENCE_DENIED);
+    }
+    else {
+        gesture_drag_offset_orig = offset;
+        gesture_drag->set_state(Gtk::EVENT_SEQUENCE_CLAIMED);
+    }
+}
+void CanvasGL::drag_gesture_update_cb(GdkEventSequence *seq)
+{
+    double x, y;
+    if (gesture_drag->get_offset(x, y)) {
+        offset = gesture_drag_offset_orig + Coordf(x, y);
+        update_viewmat();
+        queue_draw();
+    }
 }
 
 void CanvasGL::on_size_allocate(Gtk::Allocation &alloc)
 {
-    width = alloc.get_width();
-    height = alloc.get_height();
+    m_width = alloc.get_width();
+    m_height = alloc.get_height();
 
-    screenmat = glm::scale(glm::translate(glm::mat3(1), glm::vec2(-1, 1)), glm::vec2(2.0 / width, -2.0 / height));
+    screenmat = glm::scale(glm::translate(glm::mat3(1), glm::vec2(-1, 1)), glm::vec2(2.0 / m_width, -2.0 / m_height));
 
     needs_resize = true;
 
@@ -78,10 +138,11 @@ void CanvasGL::resize_buffers()
     glGetIntegerv(GL_RENDERBUFFER_BINDING, &rb); // save rb
 
     glBindRenderbuffer(GL_RENDERBUFFER, renderbuffer);
-    glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_RGBA8, width * sf, height * sf);
+    glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_RGBA8, m_width * sf,
+                                     m_height * sf);
     glBindRenderbuffer(GL_RENDERBUFFER, stencilrenderbuffer);
-    glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_DEPTH24_STENCIL8, width * sf, height * sf);
-
+    glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_DEPTH24_STENCIL8, m_width * sf,
+                                     m_height * sf);
     glBindRenderbuffer(GL_RENDERBUFFER, rb);
     grid.set_scale_factor(sf);
 }
@@ -102,6 +163,8 @@ void CanvasGL::on_realize()
     triangle_renderer.realize();
     GL_CHECK_ERROR
     marker_renderer.realize();
+    GL_CHECK_ERROR
+    picture_renderer.realize();
     GL_CHECK_ERROR
 
     GLint fb;
@@ -160,11 +223,14 @@ bool CanvasGL::on_render(const Glib::RefPtr<Gdk::GLContext> &context)
     GL_CHECK_ERROR
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    picture_renderer.render(false);
+    GL_CHECK_ERROR
     grid.render();
     GL_CHECK_ERROR
     triangle_renderer.render();
     GL_CHECK_ERROR
-
+    picture_renderer.render(true);
+    GL_CHECK_ERROR
     selectables_renderer.render();
     GL_CHECK_ERROR
     drag_selection.render();
@@ -175,7 +241,9 @@ bool CanvasGL::on_render(const Glib::RefPtr<Gdk::GLContext> &context)
 
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fb);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
-    glBlitFramebuffer(0, 0, width * sf, height * sf, 0, 0, width * sf, height * sf, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glBlitFramebuffer(0, 0, m_width * sf, m_height * sf, 0, 0,
+                      m_width * sf, m_height * sf, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
     glBindFramebuffer(GL_FRAMEBUFFER, fb);
 
     GL_CHECK_ERROR
@@ -191,13 +259,14 @@ bool CanvasGL::on_button_press_event(GdkEventButton *button_event)
     pan_drag_begin(button_event);
     drag_selection.drag_begin(button_event);
     cursor_move((GdkEvent *)button_event);
-    last_button_event = button_event->type;
     return Gtk::GLArea::on_button_press_event(button_event);
 }
 
 bool CanvasGL::on_motion_notify_event(GdkEventMotion *motion_event)
 {
-    if (steal_focus)
+    bool steal = true;
+    s_signal_can_steal_focus.emit(steal);
+    if (steal)
         grab_focus();
     pan_drag_move(motion_event);
     cursor_move((GdkEvent *)motion_event);
@@ -217,10 +286,8 @@ void CanvasGL::update_cursor_pos(double x, double y)
 
 bool CanvasGL::on_button_release_event(GdkEventButton *button_event)
 {
-    if (last_button_event != GDK_2BUTTON_PRESS) {
-        pan_drag_end(button_event);
-        drag_selection.drag_end(button_event);
-    }
+    pan_drag_end(button_event);
+    drag_selection.drag_end(button_event);
     return Gtk::GLArea::on_button_release_event(button_event);
 }
 
@@ -229,7 +296,7 @@ bool CanvasGL::on_scroll_event(GdkEventScroll *scroll_event)
 #if GTK_CHECK_VERSION(3, 22, 0)
     auto *dev = gdk_event_get_source_device((GdkEvent *)scroll_event);
     auto src = gdk_device_get_source(dev);
-    if (src == GDK_SOURCE_TRACKPOINT) {
+    if (src == GDK_SOURCE_TRACKPOINT || (src == GDK_SOURCE_TOUCHPAD && touchpad_pan)) {
         if (scroll_event->state & GDK_CONTROL_MASK) {
             pan_zoom(scroll_event, false);
         }
@@ -280,7 +347,7 @@ void CanvasGL::cursor_move(GdkEvent *motion_event)
     Coordi t(xi, yi);
 
     const auto &f = std::find_if(targets.begin(), targets.end(), [t, this](const auto &a) -> bool {
-        return a.p == t && this->layer_is_visible(a.layer);
+        return a.p == t && this->layer_is_visible(a.layer) && can_snap_to_target(a);
     });
     if (f != targets.end()) {
         target_current = *f;
@@ -289,68 +356,27 @@ void CanvasGL::cursor_move(GdkEvent *motion_event)
         target_current = Target();
     }
 
-    auto target_in_selection = [this](const Target &ta) {
-        if (ta.type == ObjectType::SYMBOL_PIN) {
-            SelectableRef key(ta.path.at(0), ObjectType::SCHEMATIC_SYMBOL, ta.vertex);
-            if (selectables.items_map.count(key)
-                && (selectables.items.at(selectables.items_map.at(key))
-                            .get_flag(horizon::Selectable::Flag::SELECTED))) {
-                return true;
-            }
-        }
-        else if (ta.type == ObjectType::PAD) {
-            SelectableRef key(ta.path.at(0), ObjectType::BOARD_PACKAGE, ta.vertex);
-            if (selectables.items_map.count(key)
-                && (selectables.items.at(selectables.items_map.at(key))
-                            .get_flag(horizon::Selectable::Flag::SELECTED))) {
-                return true;
-            }
-        }
-        else if (ta.type == ObjectType::POLYGON_EDGE) {
-            SelectableRef key(ta.path.at(0), ObjectType::POLYGON_VERTEX, ta.vertex);
-            if (selectables.items_map.count(key)
-                && (selectables.items.at(selectables.items_map.at(key))
-                            .get_flag(horizon::Selectable::Flag::SELECTED))) {
-                return true;
-            }
-        }
-        else if (ta.type == ObjectType::DIMENSION) {
-            for (int i = 0; i < 2; i++) {
-                SelectableRef key(ta.path.at(0), ObjectType::DIMENSION, i);
-                if (selectables.items_map.count(key)
-                    && (selectables.items.at(selectables.items_map.at(key))
-                                .get_flag(horizon::Selectable::Flag::SELECTED))) {
-                    return true;
-                }
-            }
-        }
-        SelectableRef key(ta.path.at(0), ta.type, ta.vertex);
-        if (selectables.items_map.count(key)
-            && (selectables.items.at(selectables.items_map.at(key)).get_flag(horizon::Selectable::Flag::SELECTED))) {
-            return true;
-        }
-        return false;
-    };
+    if (snap_to_targets) {
+        auto dfn = [this](const Target &ta) -> float {
+            // return inf if target in selection and tool active (selection not
+            // allowed)
+            if (!layer_is_visible(ta.layer))
+                return INFINITY;
 
-    auto dfn = [this, target_in_selection](const Target &ta) -> float {
-        // return inf if target in selection and tool active (selection not
-        // allowed)
-        if (!layer_is_visible(ta.layer))
-            return INFINITY;
+            if (!selection_allowed && !can_snap_to_target(ta))
+                return INFINITY;
+            else
+                return (cursor_pos - (Coordf)ta.p).mag_sq();
+        };
 
-        if (!selection_allowed && target_in_selection(ta))
-            return INFINITY;
-        else
-            return (cursor_pos - (Coordf)ta.p).mag_sq();
-    };
-
-    auto mi = std::min_element(targets.cbegin(), targets.cend(),
-                               [dfn](const auto &a, const auto &b) { return dfn(a) < dfn(b); });
-    if (mi != targets.cend()) {
-        auto d = sqrt(dfn(*mi));
-        if (d < 30 / scale) {
-            target_current = *mi;
-            t = mi->p;
+        auto mi = std::min_element(targets.cbegin(), targets.cend(),
+                                   [dfn](const auto &a, const auto &b) { return dfn(a) < dfn(b); });
+        if (mi != targets.cend()) {
+            auto d = sqrt(dfn(*mi));
+            if (d < 30 / scale) {
+                target_current = *mi;
+                t = mi->p;
+            }
         }
     }
 
@@ -381,22 +407,41 @@ void CanvasGL::center_and_zoom(const Coordi &center, float sc)
     // we want center to be at width, height/2
     if (sc > 0)
         scale = sc;
-    offset.x = -((center.x * (flip_view ? -1 : 1) * scale) - width / 2);
-    offset.y = -((center.y * -scale) - height / 2);
+    offset.x = -((center.x * (flip_view ? -1 : 1) * scale) - m_width / 2);
+    offset.y = -((center.y * -scale) - m_height / 2);
     update_viewmat();
+    s_signal_scale_changed.emit();
     queue_draw();
 }
 
 void CanvasGL::zoom_to_bbox(const Coordf &a, const Coordf &b)
 {
-    auto sc_x = width / abs(a.x - b.x);
-    auto sc_y = height / abs(a.y - b.y);
+    auto sc_x = m_width / abs(a.x - b.x);
+    auto sc_y = m_height / abs(a.y - b.y);
     scale = std::min(sc_x, sc_y);
     auto center = (a + b) / 2;
-    offset.x = -((center.x * (flip_view ? -1 : 1) * scale) - width / 2);
-    offset.y = -((center.y * -scale) - height / 2);
+    offset.x = -((center.x * (flip_view ? -1 : 1) * scale) - m_width / 2);
+    offset.y = -((center.y * -scale) - m_height / 2);
     update_viewmat();
+    s_signal_scale_changed.emit();
     queue_draw();
+}
+
+void CanvasGL::zoom_to_bbox(const std::pair<Coordf, Coordf> &bb)
+{
+    zoom_to_bbox(bb.first, bb.second);
+}
+
+
+void CanvasGL::ensure_min_size(float w, float h)
+{
+    auto sc_x = m_width / w;
+    auto sc_y = m_height / h;
+    auto sc = std::min(sc_x, sc_y);
+    if (sc < scale) {
+        auto p = get_cursor_pos_win();
+        set_scale(p.x, p.y, sc);
+    }
 }
 
 void CanvasGL::update_viewmat()
@@ -405,6 +450,7 @@ void CanvasGL::update_viewmat()
     if (flip_view)
         scale_x = -scale;
     viewmat = glm::scale(glm::translate(glm::mat3(1), glm::vec2(offset.x, offset.y)), glm::vec2(scale_x, -scale));
+    viewmat_noflip = glm::scale(glm::translate(glm::mat3(1), glm::vec2(offset.x, offset.y)), glm::vec2(scale, -scale));
 }
 
 void CanvasGL::push()
@@ -419,6 +465,7 @@ void CanvasGL::push()
         marker_renderer.push();
     if (push_filter & PF_DRAG_SELECTION)
         drag_selection.push();
+    picture_renderer.push();
     push_filter = PF_NONE;
     GL_CHECK_ERROR
 }
@@ -434,7 +481,7 @@ void CanvasGL::set_flip_view(bool fl)
     auto toggled = fl != flip_view;
     flip_view = fl;
     if (toggled) {
-        offset.x = width - offset.x;
+        offset.x = m_width - offset.x;
     }
     update_viewmat();
 }
@@ -509,6 +556,17 @@ std::set<SelectableRef> CanvasGL::get_selection_at(const Coordi &c)
 void CanvasGL::inhibit_drag_selection()
 {
     drag_selection_inhibited = true;
+}
+
+void CanvasGL::set_selection_mode(SelectionMode mode)
+{
+    selection_mode = mode;
+    s_signal_selection_mode_changed.emit(mode);
+}
+
+CanvasGL::SelectionMode CanvasGL::get_selection_mode() const
+{
+    return selection_mode;
 }
 
 void CanvasGL::set_highlight_mode(CanvasGL::HighlightMode mode)
@@ -643,6 +701,137 @@ void CanvasGL::clear()
     Canvas::clear();
     request_push();
 }
+
+bool CanvasGL::can_snap_to_target(const Target &t) const
+{
+    SnapFilter k(t.type, t.path.at(0), t.vertex);
+    if (snap_filter.count(k))
+        return false;
+    k.vertex = -1;
+    if (snap_filter.count(k))
+        return false;
+    if (t.type == ObjectType::POLYGON_ARC_CENTER || t.type == ObjectType::POLYGON_EDGE
+        || t.type == ObjectType::POLYGON_VERTEX) {
+        k.type = ObjectType::POLYGON;
+        if (snap_filter.count(k))
+            return false;
+    }
+    return true;
+}
+
+
+static const float char_space = 1;
+
+void CanvasGL::draw_bitmap_text(const Coordf &p, float sc, const std::string &rtext, int angle, ColorP color, int layer)
+{
+    Glib::ustring text(rtext);
+    auto smooth_px = bitmap_font::get_smooth_pixels();
+    Coordf point = p;
+    Placement tr;
+    tr.set_angle(angle);
+    for (auto codepoint : text) {
+        if (codepoint != ' ') {
+            auto info = bitmap_font::get_glyph_info(codepoint);
+            if (!info.is_valid()) {
+                info = bitmap_font::get_glyph_info('?');
+            }
+
+            unsigned int glyph_x = info.atlas_x + smooth_px;
+            unsigned int glyph_y = info.atlas_y + smooth_px;
+            unsigned int glyph_w = info.atlas_w - smooth_px * 2;
+            unsigned int glyph_h = info.atlas_h - smooth_px * 2;
+            float aspect = (1.0 * glyph_h) / glyph_w;
+
+            unsigned int bits =
+                    (glyph_h & 0x3f) | ((glyph_w & 0x3f) << 6) | ((glyph_y & 0x3ff) << 12) | ((glyph_x & 0x3ff) << 22);
+            auto fl = reinterpret_cast<const float *>(&bits);
+
+            Coordf shift(info.minx, info.miny);
+            Coordf p1(glyph_w * 1e6 * sc, 0);
+
+            add_triangle(layer, point + tr.transform(shift) * 1e6 * sc, tr.transform(p1), Coordf(aspect, *fl), color,
+                         Triangle::FLAG_GLYPH);
+            point += tr.transform(Coordf(info.advance * char_space * 1e6 * sc, 0));
+        }
+        else {
+            point += tr.transform(Coordf(7 * char_space * 1e6 * sc, 0));
+        }
+    }
+}
+
+std::pair<Coordf, Coordf> CanvasGL::measure_bitmap_text(const std::string &rtext) const
+{
+    std::pair<Coordf, Coordf> r;
+    Glib::ustring text(rtext);
+    auto smooth_px = bitmap_font::get_smooth_pixels();
+    Coordf point;
+    for (auto codepoint : text) {
+        auto info = bitmap_font::get_glyph_info(codepoint);
+        if (!info.is_valid()) {
+            info = bitmap_font::get_glyph_info('?');
+        }
+        Coordf p0(info.minx, info.miny);
+        Coordf p1(info.atlas_w - smooth_px * 2, info.atlas_h - smooth_px * 2);
+        p1 += p0;
+        r.first = Coordf::min(r.first, p0 + point);
+        r.second = Coordf::max(r.second, p1 + point);
+
+        point.x += info.advance * char_space;
+    }
+    r.first *= 1e6;
+    r.second *= 1e6;
+    return r;
+}
+
+
+void CanvasGL::draw_bitmap_text_box(const Placement &q, float width, float height, const std::string &s, ColorP color,
+                                    int layer, TextBoxMode mode)
+{
+    Placement p = q;
+    if (p.mirror)
+        p.invert_angle();
+    p.mirror = false;
+    if (height > width) {
+        std::swap(height, width);
+        p.inc_angle_deg(90);
+    }
+    if (height / width > .9) { // almost square
+        while (p.get_angle() >= 16384) {
+            std::swap(height, width);
+            p.inc_angle_deg(90);
+        }
+    }
+
+    auto text_bb = measure_bitmap_text(s);
+    float scale_x = width / (text_bb.second.x - text_bb.first.x);
+    float scale_y = height / ((text_bb.second.y - text_bb.first.y));
+    if (mode != TextBoxMode::FULL)
+        scale_y /= 2;
+    float sc = std::min(scale_x, scale_y) * .75;
+
+    const float text_height = (text_bb.second.y - text_bb.first.y) * sc;
+    const float text_width = (text_bb.second.x - text_bb.first.x) * sc;
+
+    Coordf text_pos(-width / 2, 0);
+    if (mode == TextBoxMode::UPPER)
+        text_pos.y = height / 4;
+    else if (mode == TextBoxMode::LOWER)
+        text_pos.y = -height / 4;
+    text_pos.y -= text_bb.first.y * sc;
+    text_pos.y -= text_height / 2;
+
+    text_pos.x += width / 2 - text_width / 2;
+
+    if (p.get_angle() > 16384 && p.get_angle() <= 49152) {
+        text_pos.x *= -1;
+        text_pos.y *= -1;
+        draw_bitmap_text(p.transform(text_pos), sc, s, p.get_angle() + 32768, color, layer);
+    }
+    else {
+
+        draw_bitmap_text(p.transform(text_pos), sc, s, p.get_angle(), color, layer);
+    }
+};
 
 // copied from
 // https://github.com/solvespace/solvespace/blob/master/src/platform/gtkmain.cpp#L357

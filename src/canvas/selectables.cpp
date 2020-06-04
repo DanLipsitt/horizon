@@ -23,7 +23,12 @@ bool Selectable::inside(const Coordf &c, float expand) const
 
 float Selectable::area() const
 {
-    return width * height;
+    if (width == 0)
+        return height;
+    else if (height == 0)
+        return width;
+    else
+        return width * height;
 }
 
 static void rotate(float &x, float &y, float a)
@@ -80,7 +85,7 @@ void Selectables::append(const UUID &uu, ObjectType ot, const Coordf &center, co
     tr.mirror = false;
     auto box_center = ca->transform.transform((b + a) / 2);
     auto box_dim = b - a;
-    append_angled(uu, ot, center, box_center, box_dim, (tr.get_angle() * M_PI) / 32768.0, vertex, layer, always);
+    append_angled(uu, ot, center, box_center, box_dim, tr.get_angle_rad(), vertex, layer, always);
 }
 
 void Selectables::append(const UUID &uu, ObjectType ot, const Coordf &center, unsigned int vertex, int layer,

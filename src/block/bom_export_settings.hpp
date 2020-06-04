@@ -10,13 +10,14 @@ using json = nlohmann::json;
 
 class BOMExportSettings {
 public:
-    BOMExportSettings(const json &);
+    BOMExportSettings(const json &, class Pool &pool);
     BOMExportSettings();
     json serialize() const;
 
     enum class Format { CSV };
     Format format = Format::CSV;
-    std::map<UUID, UUID> orderable_MPNs; // part->orderable MPN
+    std::map<UUID, UUID> orderable_MPNs;               // part->orderable MPN
+    std::map<UUID, const class Part *> concrete_parts; // part->part
 
     class CSVSettings {
     public:
@@ -34,5 +35,7 @@ public:
     CSVSettings csv_settings;
 
     std::string output_filename;
+
+    bool include_nopopulate = true;
 };
 } // namespace horizon

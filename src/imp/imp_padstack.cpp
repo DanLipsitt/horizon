@@ -4,6 +4,9 @@
 #include "parameter_window.hpp"
 #include "pool/part.hpp"
 #include "widgets/parameter_set_editor.hpp"
+#include "board/board_layers.hpp"
+#include "core/tool_id.hpp"
+#include "widgets/action_button.hpp"
 
 namespace horizon {
 ImpPadstack::ImpPadstack(const std::string &padstack_filename, const std::string &pool_path)
@@ -58,27 +61,25 @@ void ImpPadstack::construct()
     main_window->set_title("Padstack - Interactive Manipulator");
     state_store = std::make_unique<WindowStateStore>(main_window, "imp-padstack");
 
-    auto header_button = Gtk::manage(new HeaderButton);
-    header_button->set_label(core_padstack.get_padstack(false)->name);
+    header_button = Gtk::manage(new HeaderButton);
     main_window->header->set_custom_title(*header_button);
     header_button->show();
+    header_button->signal_closed().connect(sigc::mem_fun(*this, &ImpPadstack::update_header));
 
-    auto name_entry = header_button->add_entry("Name");
-    name_entry->set_text(core_padstack.get_padstack(false)->name);
-    name_entry->set_width_chars(core_padstack.get_padstack(false)->name.size());
-    name_entry->signal_changed().connect([this, name_entry, header_button] {
-        header_button->set_label(name_entry->get_text());
-        core_padstack.set_needs_save();
-    });
+    name_entry = header_button->add_entry("Name");
+    name_entry->set_text(core_padstack.get_padstack()->name);
+    name_entry->set_width_chars(core_padstack.get_padstack()->name.size());
+    name_entry->signal_changed().connect([this] { core_padstack.set_needs_save(); });
+    name_entry->signal_activate().connect(sigc::mem_fun(*this, &ImpPadstack::update_header));
 
     auto well_known_name_entry = header_button->add_entry("Well-known name");
-    well_known_name_entry->set_text(core_padstack.get_padstack(false)->well_known_name);
+    well_known_name_entry->set_text(core_padstack.get_padstack()->well_known_name);
     well_known_name_entry->signal_changed().connect([this, well_known_name_entry] { core_padstack.set_needs_save(); });
 
-    core_padstack.signal_save().connect([this, name_entry, well_known_name_entry, header_button] {
-        core_padstack.get_padstack(false)->name = name_entry->get_text();
-        core_padstack.get_padstack(false)->well_known_name = well_known_name_entry->get_text();
-        header_button->set_label(core_padstack.get_padstack(false)->name);
+    core_padstack.signal_save().connect([this, well_known_name_entry] {
+        core_padstack.get_padstack()->name = name_entry->get_text();
+        core_padstack.get_padstack()->well_known_name = well_known_name_entry->get_text();
+        header_button->set_label(core_padstack.get_padstack()->name);
     });
 
     auto type_combo = Gtk::manage(new Gtk::ComboBoxText());
@@ -90,7 +91,7 @@ void ImpPadstack::construct()
     type_combo->append("mechanical", "Mechanical");
     type_combo->show();
     header_button->add_widget("Type", type_combo);
-    type_combo->set_active_id(Padstack::type_lut.lookup_reverse(core_padstack.get_padstack(false)->type));
+    type_combo->set_active_id(Padstack::type_lut.lookup_reverse(core_padstack.get_padstack()->type));
     type_combo->signal_changed().connect([this] { core_padstack.set_needs_save(); });
 
     auto editor = new ImpPadstackParameterSetEditor(&core_padstack.parameter_set, &core_padstack.parameters_required);
@@ -108,9 +109,9 @@ void ImpPadstack::construct()
 
 
     parameter_window->signal_apply().connect([this, parameter_window] {
-        if (core.r->tool_is_active())
+        if (core->tool_is_active())
             return;
-        auto ps = core_padstack.get_padstack(false);
+        auto ps = core_padstack.get_padstack();
         auto r_compile = ps->parameter_program.set_code(core_padstack.parameter_program_code);
         if (r_compile.first) {
             parameter_window->set_error_message("<b>Compile error:</b>" + r_compile.second);
@@ -131,15 +132,28 @@ void ImpPadstack::construct()
         core_padstack.rebuild();
         canvas_update();
     });
-    core.r->signal_tool_changed().connect(
+    core->signal_tool_changed().connect(
             [parameter_window](ToolID t) { parameter_window->set_can_apply(t == ToolID::NONE); });
 
     core_padstack.signal_save().connect([this, type_combo] {
-        core_padstack.get_padstack(false)->type = Padstack::type_lut.lookup(type_combo->get_active_id());
+        core_padstack.get_padstack()->type = Padstack::type_lut.lookup(type_combo->get_active_id());
     });
+
+    add_action_button(make_action(ToolID::PLACE_SHAPE));
+    add_action_button(make_action(ToolID::PLACE_SHAPE_RECTANGLE));
+    add_action_button(make_action(ToolID::PLACE_SHAPE_OBROUND));
+    add_action_button(make_action(ToolID::PLACE_HOLE)).set_margin_top(5);
+    add_action_button(make_action(ToolID::PLACE_HOLE_SLOT));
+    {
+        auto &b = add_action_button(make_action(ToolID::DRAW_POLYGON));
+        b.set_margin_top(5);
+        b.add_action(make_action(ToolID::DRAW_POLYGON_RECTANGLE));
+        b.add_action(make_action(ToolID::DRAW_POLYGON_CIRCLE));
+    }
+    update_header();
 }
 
-std::pair<ActionID, ToolID> ImpPadstack::get_doubleclick_action(ObjectType type, const UUID &uu)
+ActionToolID ImpPadstack::get_doubleclick_action(ObjectType type, const UUID &uu)
 {
     auto a = ImpBase::get_doubleclick_action(type, uu);
     if (a.first != ActionID::NONE)
@@ -152,5 +166,25 @@ std::pair<ActionID, ToolID> ImpPadstack::get_doubleclick_action(ObjectType type,
         return {ActionID::NONE, ToolID::NONE};
     }
 }
+
+std::map<ObjectType, ImpBase::SelectionFilterInfo> ImpPadstack::get_selection_filter_info() const
+{
+    const std::vector<int> my_layers = {BoardLayers::TOP_PASTE,   BoardLayers::TOP_MASK,      BoardLayers::TOP_COPPER,
+                                        BoardLayers::IN1_COPPER,  BoardLayers::BOTTOM_COPPER, BoardLayers::BOTTOM_MASK,
+                                        BoardLayers::BOTTOM_PASTE};
+    std::map<ObjectType, ImpBase::SelectionFilterInfo> r = {
+            {ObjectType::SHAPE, {my_layers, false}},
+            {ObjectType::HOLE, {}},
+            {ObjectType::POLYGON, {my_layers, false}},
+    };
+    return r;
+}
+
+void ImpPadstack::update_header()
+{
+    header_button->set_label(name_entry->get_text());
+    set_window_title(name_entry->get_text());
+}
+
 
 }; // namespace horizon

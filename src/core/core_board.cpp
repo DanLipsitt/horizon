@@ -5,16 +5,20 @@
 #include "util/util.hpp"
 #include <algorithm>
 #include "nlohmann/json.hpp"
+#include <giomm/file.h>
+#include <glibmm/fileutils.h>
 
 namespace horizon {
 CoreBoard::CoreBoard(const std::string &board_filename, const std::string &block_filename, const std::string &via_dir,
-                     Pool &pool)
+                     const std::string &pictures_dir, Pool &pool)
     : via_padstack_provider(via_dir, pool), block(Block::new_from_file(block_filename, pool)),
       brd(Board::new_from_file(board_filename, block, pool, via_padstack_provider)), rules(brd.rules),
-      fab_output_settings(brd.fab_output_settings), pdf_export_settings(brd.pdf_export_settings), colors(brd.colors),
-      m_board_filename(board_filename), m_block_filename(block_filename), m_via_dir(via_dir)
+      fab_output_settings(brd.fab_output_settings), pdf_export_settings(brd.pdf_export_settings),
+      step_export_settings(brd.step_export_settings), pnp_export_settings(brd.pnp_export_settings), colors(brd.colors),
+      m_board_filename(board_filename), m_block_filename(block_filename), m_pictures_dir(pictures_dir)
 {
     m_pool = &pool;
+    brd.load_pictures(pictures_dir);
     rebuild();
 }
 
@@ -25,6 +29,9 @@ void CoreBoard::reload_netlist()
     brd.update_refs();
     for (auto it = brd.packages.begin(); it != brd.packages.end();) {
         if (it->second.component == nullptr || it->second.component->part == nullptr) {
+            for (auto &it_txt : it->second.texts) {
+                brd.texts.erase(it_txt->uuid);
+            }
             brd.packages.erase(it++);
         }
         else {
@@ -60,61 +67,6 @@ void CoreBoard::reload_netlist()
     rebuild();
 }
 
-bool CoreBoard::has_object_type(ObjectType ty) const
-{
-    switch (ty) {
-    case ObjectType::JUNCTION:
-    case ObjectType::POLYGON:
-    case ObjectType::BOARD_HOLE:
-    case ObjectType::TRACK:
-    case ObjectType::POLYGON_EDGE:
-    case ObjectType::POLYGON_VERTEX:
-    case ObjectType::POLYGON_ARC_CENTER:
-    case ObjectType::TEXT:
-    case ObjectType::LINE:
-    case ObjectType::ARC:
-    case ObjectType::BOARD_PACKAGE:
-    case ObjectType::VIA:
-    case ObjectType::DIMENSION:
-    case ObjectType::KEEPOUT:
-    case ObjectType::CONNECTION_LINE:
-        return true;
-        break;
-    default:;
-    }
-
-    return false;
-}
-
-std::map<UUID, Polygon> *CoreBoard::get_polygon_map(bool work)
-{
-    return &brd.polygons;
-}
-std::map<UUID, Junction> *CoreBoard::get_junction_map(bool work)
-{
-    return &brd.junctions;
-}
-std::map<UUID, Text> *CoreBoard::get_text_map(bool work)
-{
-    return &brd.texts;
-}
-std::map<UUID, Line> *CoreBoard::get_line_map(bool work)
-{
-    return &brd.lines;
-}
-std::map<UUID, Arc> *CoreBoard::get_arc_map(bool work)
-{
-    return &brd.arcs;
-}
-std::map<UUID, Dimension> *CoreBoard::get_dimension_map()
-{
-    return &brd.dimensions;
-}
-std::map<UUID, Keepout> *CoreBoard::get_keepout_map()
-{
-    return &brd.keepouts;
-}
-
 bool CoreBoard::get_property(ObjectType type, const UUID &uu, ObjectProperty::ID property, PropertyValue &value)
 {
     if (Core::get_property(type, uu, property, value))
@@ -125,6 +77,10 @@ bool CoreBoard::get_property(ObjectType type, const UUID &uu, ObjectProperty::ID
         switch (property) {
         case ObjectProperty::ID::FLIPPED:
             dynamic_cast<PropertyValueBool &>(value).value = pkg->flip;
+            return true;
+
+        case ObjectProperty::ID::FIXED:
+            dynamic_cast<PropertyValueBool &>(value).value = pkg->fixed;
             return true;
 
         case ObjectProperty::ID::REFDES:
@@ -152,6 +108,37 @@ bool CoreBoard::get_property(ObjectType type, const UUID &uu, ObjectProperty::ID
         case ObjectProperty::ID::POSITION_Y:
         case ObjectProperty::ID::ANGLE:
             get_placement(pkg->placement, value, property);
+            return true;
+
+        case ObjectProperty::ID::OMIT_SILKSCREEN:
+            dynamic_cast<PropertyValueBool &>(value).value = pkg->omit_silkscreen;
+            return true;
+
+        case ObjectProperty::ID::OMIT_OUTLINE:
+            dynamic_cast<PropertyValueBool &>(value).value = pkg->omit_outline;
+            return true;
+
+        default:
+            return false;
+        }
+
+    } break;
+
+    case ObjectType::BOARD_PANEL: {
+        auto &panel = brd.board_panels.at(uu);
+        switch (property) {
+        case ObjectProperty::ID::OMIT_OUTLINE:
+            dynamic_cast<PropertyValueBool &>(value).value = panel.omit_outline;
+            return true;
+
+        case ObjectProperty::ID::NAME:
+            dynamic_cast<PropertyValueString &>(value).value = panel.included_board->get_name();
+            return true;
+
+        case ObjectProperty::ID::POSITION_X:
+        case ObjectProperty::ID::POSITION_Y:
+        case ObjectProperty::ID::ANGLE:
+            get_placement(panel.placement, value, property);
             return true;
 
         default:
@@ -302,6 +289,10 @@ bool CoreBoard::set_property(ObjectType type, const UUID &uu, ObjectProperty::ID
             pkg->flip = dynamic_cast<const PropertyValueBool &>(value).value;
             break;
 
+        case ObjectProperty::ID::FIXED:
+            pkg->fixed = dynamic_cast<const PropertyValueBool &>(value).value;
+            break;
+
         case ObjectProperty::ID::ALTERNATE_PACKAGE: {
             const auto alt_uuid = dynamic_cast<const PropertyValueUUID &>(value).value;
             if (!alt_uuid) {
@@ -316,12 +307,41 @@ bool CoreBoard::set_property(ObjectType type, const UUID &uu, ObjectProperty::ID
         case ObjectProperty::ID::POSITION_X:
         case ObjectProperty::ID::POSITION_Y:
         case ObjectProperty::ID::ANGLE: {
+            if (pkg->fixed)
+                return false;
             const auto shift_before = pkg->placement.shift;
             set_placement(pkg->placement, value, property);
             auto delta = pkg->placement.shift - shift_before;
             for (auto &text : pkg->texts) {
                 text->placement.shift += delta;
             }
+        } break;
+
+        case ObjectProperty::ID::OMIT_SILKSCREEN:
+            pkg->omit_silkscreen = dynamic_cast<const PropertyValueBool &>(value).value;
+            break;
+
+        case ObjectProperty::ID::OMIT_OUTLINE:
+            pkg->omit_outline = dynamic_cast<const PropertyValueBool &>(value).value;
+            break;
+
+        default:
+            return false;
+        }
+    } break;
+
+    case ObjectType::BOARD_PANEL: {
+        auto &panel = brd.board_panels.at(uu);
+        switch (property) {
+
+        case ObjectProperty::ID::OMIT_OUTLINE:
+            panel.omit_outline = dynamic_cast<const PropertyValueBool &>(value).value;
+            break;
+
+        case ObjectProperty::ID::POSITION_X:
+        case ObjectProperty::ID::POSITION_Y:
+        case ObjectProperty::ID::ANGLE: {
+            set_placement(panel.placement, value, property);
         } break;
 
         default:
@@ -431,6 +451,13 @@ bool CoreBoard::get_property_meta(ObjectType type, const UUID &uu, ObjectPropert
             return true;
         }
 
+        case ObjectProperty::ID::POSITION_X:
+        case ObjectProperty::ID::POSITION_Y:
+        case ObjectProperty::ID::ANGLE:
+        case ObjectProperty::ID::FLIPPED:
+            meta.is_settable = !pkg->fixed;
+            return true;
+
         default:
             return false;
         }
@@ -469,45 +496,6 @@ bool CoreBoard::get_property_meta(ObjectType type, const UUID &uu, ObjectPropert
     }
 }
 
-std::string CoreBoard::get_display_name(ObjectType type, const UUID &uu)
-{
-    switch (type) {
-    case ObjectType::BOARD_PACKAGE:
-        return brd.packages.at(uu).component->refdes;
-
-    case ObjectType::TRACK: {
-        const auto &tr = brd.tracks.at(uu);
-        return tr.net ? tr.net->name : "";
-    }
-
-    case ObjectType::VIA: {
-        const auto ju = brd.vias.at(uu).junction;
-        return ju->net ? ju->net->name : "";
-    }
-
-    default:
-        return Core::get_display_name(type, uu);
-    }
-}
-
-std::vector<Track *> CoreBoard::get_tracks(bool work)
-{
-    std::vector<Track *> r;
-    for (auto &it : brd.tracks) {
-        r.push_back(&it.second);
-    }
-    return r;
-}
-
-std::vector<Line *> CoreBoard::get_lines(bool work)
-{
-    std::vector<Line *> r;
-    for (auto &it : brd.lines) {
-        r.push_back(&it.second);
-    }
-    return r;
-}
-
 void CoreBoard::rebuild(bool from_undo)
 {
     clock_t begin = clock();
@@ -528,14 +516,19 @@ const Board *CoreBoard::get_canvas_data()
     return &brd;
 }
 
-Board *CoreBoard::get_board(bool work)
+Board *CoreBoard::get_board()
 {
     return &brd;
 }
 
-Block *CoreBoard::get_block(bool work)
+const Board *CoreBoard::get_board() const
 {
-    return get_board(work)->block;
+    return &brd;
+}
+
+Block *CoreBoard::get_block()
+{
+    return get_board()->block;
 }
 
 Rules *CoreBoard::get_rules()
@@ -553,62 +546,32 @@ ViaPadstackProvider *CoreBoard::get_via_padstack_provider()
     return &via_padstack_provider;
 }
 
-void CoreBoard::commit()
-{
-    set_needs_save(true);
-}
-
-void CoreBoard::revert()
-{
-    history_load(history_current);
-    reverted = true;
-}
-
-CoreBoard::HistoryItem::HistoryItem(const Block &b, const Board &r) : block(b), brd(r.serialize())
+CoreBoard::HistoryItem::HistoryItem(const Block &b, const Board &r) : block(b), brd(shallow_copy, r)
 {
 }
 
 void CoreBoard::history_push()
 {
     history.push_back(std::make_unique<CoreBoard::HistoryItem>(block, brd));
-    auto x = dynamic_cast<CoreBoard::HistoryItem *>(history.back().get());
-    for (const auto &it : brd.planes) {
-        auto &frags = x->fragments[it.first];
-        frags.reserve(it.second.fragments.size());
-        std::copy(it.second.fragments.begin(), it.second.fragments.end(), std::back_inserter(frags));
-    }
 }
 
 void CoreBoard::history_load(unsigned int i)
 {
     auto x = dynamic_cast<CoreBoard::HistoryItem *>(history.at(history_current).get());
-    UUID uu(x->brd.at("uuid").get<std::string>());
     std::map<UUID, unsigned int> plane_revs;
     for (const auto &it : brd.planes) {
         plane_revs[it.first] = it.second.revision;
     }
     brd.~Board(); // reconstruct board from json
-    new (&brd) Board(uu, x->brd, x->block, *m_pool, via_padstack_provider);
-
+    new (&brd) Board(x->brd);
     block = x->block;
     brd.update_refs();
-    for (const auto &it : x->fragments) {
-        if (brd.planes.count(it.first)) {
-            std::copy(it.second.begin(), it.second.end(), std::back_inserter(brd.planes.at(it.first).fragments));
-            if (plane_revs.count(it.first))
-                brd.planes.at(it.first).revision = plane_revs.at(it.first) + 1;
-        }
-    }
     brd.expand();
 }
 
 json CoreBoard::get_meta()
 {
-    auto j = load_json_from_file(m_board_filename);
-    if (j.count("_imp")) {
-        return j["_imp"];
-    }
-    return nullptr;
+    return get_meta_from_file(m_board_filename);
 }
 
 std::pair<Coordi, Coordi> CoreBoard::get_bbox()
@@ -616,51 +579,28 @@ std::pair<Coordi, Coordi> CoreBoard::get_bbox()
     return brd.get_bbox();
 }
 
-bool CoreBoard::can_search_for_object_type(ObjectType ty) const
+const std::string &CoreBoard::get_filename() const
 {
-    switch (ty) {
-    case ObjectType::BOARD_PACKAGE:
-        return true;
-        break;
-    default:;
-    }
-
-    return false;
+    return m_board_filename;
 }
 
-std::list<Core::SearchResult> CoreBoard::search(const SearchQuery &q)
-{
-    std::list<Core::SearchResult> results;
-    if (q.query.size() == 0)
-        return results;
-    if (q.types.count(ObjectType::BOARD_PACKAGE)) {
-        for (const auto &it : brd.packages) {
-            if (it.second.component->refdes.find(q.query) != std::string::npos) {
-                results.emplace_back(ObjectType::BOARD_PACKAGE, it.first);
-                auto &x = results.back();
-                x.location = it.second.placement.shift;
-                x.selectable = true;
-            }
-        }
-    }
-    sort_search_results(results, q);
-    return results;
-}
-
-void CoreBoard::save()
+void CoreBoard::save(const std::string &suffix)
 {
     brd.rules = rules;
     brd.fab_output_settings = fab_output_settings;
     brd.pdf_export_settings = pdf_export_settings;
+    brd.step_export_settings = step_export_settings;
+    brd.pnp_export_settings = pnp_export_settings;
     brd.colors = colors;
     auto j = brd.serialize();
-    auto save_meta = s_signal_request_save_meta.emit();
-    j["_imp"] = save_meta;
-    save_json_to_file(m_board_filename, j);
-
-    set_needs_save(false);
-
-    // json j = block.serialize();
-    // std::cout << std::setw(4) << j << std::endl;
+    save_json_to_file(m_board_filename + suffix, j);
+    brd.save_pictures(m_pictures_dir);
 }
+
+void CoreBoard::delete_autosave()
+{
+    if (Glib::file_test(m_board_filename + autosave_suffix, Glib::FILE_TEST_IS_REGULAR))
+        Gio::File::create_for_path(m_board_filename + autosave_suffix)->remove();
+}
+
 } // namespace horizon

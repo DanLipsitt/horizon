@@ -83,6 +83,15 @@ static void part_add_dir_to_graph(PoolUpdateGraph &graph, const std::string &dir
     }
 }
 
+static std::set<UUID> uuids_from_missing(const std::set<std::pair<const PoolUpdateNode *, UUID>> &missing)
+{
+    std::set<UUID> r;
+    for (const auto &it : missing) {
+        r.insert(it.second);
+    }
+    return r;
+}
+
 static void status_cb_nop(PoolUpdateStatus st, const std::string msg, const std::string filename)
 {
 }
@@ -91,7 +100,7 @@ class PoolUpdater {
 public:
     PoolUpdater(const std::string &bp, pool_update_cb_t status_cb);
     void update(const std::vector<std::string> &base_paths);
-    bool update_some(const std::string &pool_base_path, const std::vector<std::string> &filenames,
+    void update_some(const std::string &pool_base_path, const std::vector<std::string> &filenames,
                      std::set<UUID> &all_parts_updated);
 
 private:
@@ -155,7 +164,7 @@ std::string PoolUpdater::get_path_rel(const std::string &filename) const
 }
 
 
-bool PoolUpdater::update_some(const std::string &pool_base_path, const std::vector<std::string> &filenames,
+void PoolUpdater::update_some(const std::string &pool_base_path, const std::vector<std::string> &filenames,
                               std::set<UUID> &all_parts_updated)
 {
     set_pool_info(pool_base_path);
@@ -213,9 +222,6 @@ bool PoolUpdater::update_some(const std::string &pool_base_path, const std::vect
         }
     }
     pool->db.execute("COMMIT");
-
-
-    return true;
 }
 
 void PoolUpdater::update(const std::vector<std::string> &base_paths)
@@ -272,6 +278,7 @@ void PoolUpdater::update(const std::vector<std::string> &base_paths)
     status_cb(PoolUpdateStatus::INFO, "", "parts");
     pool->db.execute("BEGIN TRANSACTION");
     pool->db.execute("DELETE FROM parts");
+    pool->db.execute("DELETE FROM orderable_MPNs");
     for (const auto &bp : base_paths) {
         set_pool_info(bp);
         update_parts(Glib::build_filename(bp, "parts"));
@@ -300,7 +307,7 @@ PoolUpdater::PoolUpdater(const std::string &bp, pool_update_cb_t cb) : status_cb
         int user_version = db.get_user_version();
         if (user_version != Pool::get_required_schema_version()) {
             // update schema
-            auto bytes = Gio::Resource::lookup_data_global("/net/carrotIndustries/horizon/pool-update/schema.sql");
+            auto bytes = Gio::Resource::lookup_data_global("/org/horizon-eda/horizon/pool-update/schema.sql");
             gsize size{bytes->get_size() + 1}; // null byte
             auto data = (const char *)bytes->get_data(size);
             db.execute(data);
@@ -308,6 +315,7 @@ PoolUpdater::PoolUpdater(const std::string &bp, pool_update_cb_t cb) : status_cb
         }
     }
     pool = std::make_unique<Pool>(bp, false);
+    pool->db.execute("PRAGMA journal_mode=WAL");
 }
 
 void PoolUpdater::update_frames(const std::string &directory, const std::string &prefix)
@@ -668,6 +676,15 @@ void PoolUpdater::update_packages(const std::string &directory)
 {
     PoolUpdateGraph graph;
     pkg_add_dir_to_graph(graph, directory, status_cb);
+    {
+        auto missing = graph.update_dependants();
+        auto uuids_missing = uuids_from_missing(missing);
+        for (const auto &it : uuids_missing) { // try to resolve missing from items already added
+            if (exists(ObjectType::PACKAGE, it))
+                graph.add_node(it, "", {});
+        }
+    }
+
     auto missing = graph.update_dependants();
     for (const auto &it : missing) {
         status_cb(PoolUpdateStatus::FILE_ERROR, it.first->filename, "missing dependency " + (std::string)it.second);
@@ -784,6 +801,11 @@ void PoolUpdater::update_part(const std::string &filename, bool partial)
                     q.bind(1, part.uuid);
                     q.step();
                 }
+                {
+                    SQLite::Query q(pool->db, "DELETE FROM orderable_MPNs WHERE part = ?");
+                    q.bind(1, part.uuid);
+                    q.step();
+                }
                 clear_tags(ObjectType::PART, part.uuid);
                 clear_dependencies(ObjectType::PART, part.uuid);
             }
@@ -795,10 +817,10 @@ void PoolUpdater::update_part(const std::string &filename, bool partial)
             SQLite::Query q(pool->db,
                             "INSERT INTO parts "
                             "(uuid, MPN, manufacturer, entity, package, description, filename, pool_uuid, overridden, "
-                            "parametric_table) "
+                            "parametric_table, base) "
                             "VALUES "
                             "($uuid, $MPN, $manufacturer, $entity, $package, $description, $filename, $pool_uuid, "
-                            "$overridden, $parametric_table)");
+                            "$overridden, $parametric_table, $base)");
             q.bind("$uuid", part.uuid);
             q.bind("$MPN", part.get_MPN());
             q.bind("$manufacturer", part.get_manufacturer());
@@ -808,6 +830,7 @@ void PoolUpdater::update_part(const std::string &filename, bool partial)
             q.bind("$pool_uuid", pool_uuid);
             q.bind("$overridden", overridden);
             q.bind("$parametric_table", table);
+            q.bind("$base", part.base ? part.base->uuid : UUID());
             q.bind("$filename", get_path_rel(filename));
             q.step();
 
@@ -817,6 +840,15 @@ void PoolUpdater::update_part(const std::string &filename, bool partial)
                                  "($tag, $uuid, 'part')");
                 q2.bind("$uuid", part.uuid);
                 q2.bind("$tag", it_tag);
+                q2.step();
+            }
+            for (const auto &it_MPN : part.orderable_MPNs) {
+                SQLite::Query q2(pool->db,
+                                 "INSERT into orderable_MPNs (part, uuid, MPN) VALUES "
+                                 "($part, $uuid, $MPN)");
+                q2.bind("$part", part.uuid);
+                q2.bind("$uuid", it_MPN.first);
+                q2.bind("$MPN", it_MPN.second);
                 q2.step();
             }
             if (part.base) {
@@ -855,6 +887,15 @@ void PoolUpdater::update_parts(const std::string &directory)
 {
     PoolUpdateGraph graph;
     part_add_dir_to_graph(graph, directory, status_cb);
+    {
+        auto missing = graph.update_dependants();
+        auto uuids_missing = uuids_from_missing(missing);
+        for (const auto &it : uuids_missing) { // try to resolve missing from items already added
+            if (exists(ObjectType::PART, it))
+                graph.add_node(it, "", {});
+        }
+    }
+
     auto missing = graph.update_dependants();
     for (const auto &it : missing) {
         status_cb(PoolUpdateStatus::FILE_ERROR, it.first->filename, "missing dependency " + (std::string)it.second);
@@ -921,14 +962,14 @@ void pool_update(const std::string &pool_base_path, pool_update_cb_t status_cb, 
         updater.update(paths);
     }
     else {
-        if (!updater.update_some(pool_base_path, filenames, parts_updated)) { // partial update failed, need full update
-            updater.update(paths);
-            parts_updated.clear();
-        }
+        updater.update_some(pool_base_path, filenames, parts_updated);
     }
 
     if (parametric) {
-        pool_update_parametric(pool_base_path, status_cb, parts_updated);
+        if (filenames.size() == 0) // complete update
+            pool_update_parametric(pool_base_path, status_cb);
+        else if (parts_updated.size())
+            pool_update_parametric(pool_base_path, status_cb, parts_updated);
     }
     status_cb(PoolUpdateStatus::DONE, "done", "");
 }

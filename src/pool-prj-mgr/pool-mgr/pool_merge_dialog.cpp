@@ -7,6 +7,7 @@
 #include "util/sqlite.hpp"
 #include "util/util.hpp"
 #include <iostream>
+#include <iomanip>
 #include "nlohmann/json.hpp"
 
 namespace horizon {
@@ -38,7 +39,7 @@ PoolMergeBox *PoolMergeBox::create()
 {
     PoolMergeBox *w;
     Glib::RefPtr<Gtk::Builder> x = Gtk::Builder::create();
-    x->add_from_resource("/net/carrotIndustries/horizon/pool-prj-mgr/pool-mgr/pool_merge.ui");
+    x->add_from_resource("/org/horizon-eda/horizon/pool-prj-mgr/pool-mgr/pool_merge.ui");
     x->get_widget_derived("box", w);
     w->reference();
     return w;

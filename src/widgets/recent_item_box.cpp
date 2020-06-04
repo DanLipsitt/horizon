@@ -2,13 +2,14 @@
 
 namespace horizon {
 RecentItemBox::RecentItemBox(const std::string &name, const std::string &pa, const Glib::DateTime &ti)
-    : Gtk::Box(Gtk::ORIENTATION_VERTICAL, 6), path(pa), time(ti)
+    : path(pa), time(ti)
 {
-    property_margin() = 12;
+    auto box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 6));
+    box->property_margin() = 12;
     auto tbox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 12));
     {
         auto la = Gtk::manage(new Gtk::Label());
-        la->set_markup("<b>" + name + "</b>");
+        la->set_markup("<b>" + Glib::Markup::escape_text(name) + "</b>");
         la->set_xalign(0);
         tbox->pack_start(*la, true, true, 0);
     }
@@ -18,19 +19,45 @@ RecentItemBox::RecentItemBox(const std::string &name, const std::string &pa, con
         tbox->pack_start(*time_label, false, false, 0);
         update_time();
     }
-    pack_start(*tbox, true, true, 0);
+    box->pack_start(*tbox, true, true, 0);
     {
         auto la = Gtk::manage(new Gtk::Label(path));
         la->set_xalign(0);
         la->set_ellipsize(Pango::ELLIPSIZE_START);
         la->set_tooltip_text(path);
         la->get_style_context()->add_class("dim-label");
-        pack_start(*la, false, false, 0);
+        box->pack_start(*la, false, false, 0);
+    }
+
+    {
+        auto item = Gtk::manage(new Gtk::MenuItem("Remove from this list"));
+        item->signal_activate().connect([this] { s_signal_remove.emit(); });
+        item->show();
+        menu.append(*item);
+    }
+    {
+        auto item = Gtk::manage(new Gtk::MenuItem("Open in file browser"));
+        item->signal_activate().connect([this] {
+            auto uri = Gio::File::create_for_path(Glib::path_get_dirname(path))->get_uri();
+            Gio::AppInfo::launch_default_for_uri(uri);
+        });
+        item->show();
+        menu.append(*item);
     }
 
     Glib::signal_timeout().connect_seconds(sigc::bind_return(sigc::mem_fun(*this, &RecentItemBox::update_time), true),
                                            1);
-
+    add_events(Gdk::BUTTON_PRESS_MASK);
+    signal_button_press_event().connect([this](GdkEventButton *ev) {
+        if (gdk_event_triggers_context_menu((GdkEvent *)ev)) {
+            menu.popup_at_pointer((GdkEvent *)ev);
+            return true;
+        }
+        else {
+            return false;
+        }
+    });
+    add(*box);
     show_all();
 }
 
@@ -46,6 +73,7 @@ void RecentItemBox::update_time()
     auto one_minute = (60);
     int n = 0;
     std::string unit;
+    bool is_hour = false;
     if (delta_sec >= one_year) {
         n = delta_sec / one_year;
         unit = "year";
@@ -65,6 +93,7 @@ void RecentItemBox::update_time()
     else if (delta_sec >= one_hour) {
         n = delta_sec / one_hour;
         unit = "hour";
+        is_hour = true;
     }
     else if (delta_sec >= one_minute) {
         n = delta_sec / one_minute;
@@ -76,7 +105,10 @@ void RecentItemBox::update_time()
         s = "just now";
     }
     else {
-        if (n == 1) {
+        if (is_hour && n == 1) {
+            s = "an";
+        }
+        else if (n == 1) {
             s = "a";
         }
         else {

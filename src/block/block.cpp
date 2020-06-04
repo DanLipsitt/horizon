@@ -77,10 +77,16 @@ Block::Block(const UUID &uu, const json &j, Pool &pool) : uuid(uu), name(j.at("n
     }
     if (j.count("bom_export_settings")) {
         try {
-            bom_export_settings = BOMExportSettings(j.at("bom_export_settings"));
+            bom_export_settings = BOMExportSettings(j.at("bom_export_settings"), pool);
         }
         catch (const std::exception &e) {
             Logger::log_warning("couldn't load bom export settings", Logger::Domain::BLOCK, e.what());
+        }
+    }
+    if (j.count("project_meta")) {
+        const json &o = j["project_meta"];
+        for (auto it = o.cbegin(); it != o.cend(); ++it) {
+            project_meta[it.key()] = it.value();
         }
     }
 }
@@ -111,7 +117,7 @@ Block::Block(const UUID &uu) : uuid(uu)
 Block Block::new_from_file(const std::string &filename, Pool &obj)
 {
     auto j = load_json_from_file(filename);
-    return Block(UUID(j["uuid"].get<std::string>()), j, obj);
+    return Block(UUID(j.at("uuid").get<std::string>()), j, obj);
 }
 
 Net *Block::get_net(const UUID &uu)
@@ -216,7 +222,7 @@ void Block::update_connection_count()
 Block::Block(const Block &block)
     : uuid(block.uuid), name(block.name), nets(block.nets), buses(block.buses), components(block.components),
       net_classes(block.net_classes), net_class_default(block.net_class_default), group_names(block.group_names),
-      tag_names(block.tag_names), bom_export_settings(block.bom_export_settings)
+      tag_names(block.tag_names), project_meta(block.project_meta), bom_export_settings(block.bom_export_settings)
 {
     update_refs();
 }
@@ -232,6 +238,7 @@ void Block::operator=(const Block &block)
     net_class_default = block.net_class_default;
     group_names = block.group_names;
     tag_names = block.tag_names;
+    project_meta = block.project_meta;
     bom_export_settings = block.bom_export_settings;
     update_refs();
 }
@@ -267,6 +274,7 @@ json Block::serialize()
         j["tag_names"][(std::string)it.first] = it.second;
     }
     j["bom_export_settings"] = bom_export_settings.serialize();
+    j["project_meta"] = project_meta;
 
     return j;
 }
@@ -295,9 +303,16 @@ std::map<const Part *, BOMRow> Block::get_BOM(const BOMExportSettings &settings)
 {
     std::map<const Part *, BOMRow> rows;
     for (const auto &it : components) {
+        if (it.second.nopopulate && !settings.include_nopopulate) {
+            continue;
+        }
         if (it.second.part) {
-            rows[it.second.part];
-            rows[it.second.part].refdes.push_back(it.second.refdes);
+            const Part *part;
+            if (settings.concrete_parts.count(it.second.part->uuid))
+                part = settings.concrete_parts.at(it.second.part->uuid);
+            else
+                part = it.second.part;
+            rows[part].refdes.push_back(it.second.refdes);
         }
     }
     for (auto &it : rows) {
@@ -336,6 +351,74 @@ std::string Block::get_tag_name(const UUID &uu) const
         return tag_names.at(uu);
     else
         return (std::string)uu;
+}
+
+std::map<std::string, std::string> Block::peek_project_meta(const std::string &filename)
+{
+    auto j = load_json_from_file(filename);
+    if (j.count("project_meta")) {
+        const json &o = j["project_meta"];
+        std::map<std::string, std::string> project_meta;
+        for (auto it = o.cbegin(); it != o.cend(); ++it) {
+            project_meta[it.key()] = it.value();
+        }
+        return project_meta;
+    }
+    return {};
+}
+
+std::string Block::get_net_name(const UUID &uu) const
+{
+    auto &net = nets.at(uu);
+    if (net.name.size()) {
+        return net.name;
+    }
+    else {
+        std::string n;
+        for (const auto &it : components) {
+            for (const auto &it_conn : it.second.connections) {
+                if (it_conn.second.net && it_conn.second.net->uuid == uu) {
+                    n += it.second.refdes + ", ";
+                }
+            }
+        }
+        if (n.size()) {
+            n.pop_back();
+            n.pop_back();
+        }
+        return n;
+    }
+}
+
+bool Block::can_swap_gates(const UUID &comp_uu, const UUID &g1_uu, const UUID &g2_uu) const
+{
+    const auto &comp = components.at(comp_uu);
+    const auto &g1 = comp.entity->gates.at(g1_uu);
+    const auto &g2 = comp.entity->gates.at(g2_uu);
+    return (g1.unit->uuid == g2.unit->uuid) && (g1.swap_group == g2.swap_group) && (g1.swap_group != 0);
+}
+
+void Block::swap_gates(const UUID &comp_uu, const UUID &g1_uu, const UUID &g2_uu)
+{
+    if (!can_swap_gates(comp_uu, g1_uu, g2_uu))
+        throw std::runtime_error("can't swap gates");
+
+    auto &comp = components.at(comp_uu);
+    std::map<UUIDPath<2>, Connection> new_connections;
+    for (const auto &it : comp.connections) {
+        if (it.first.at(0) == g1_uu) {
+            new_connections.emplace(std::piecewise_construct, std::forward_as_tuple(g2_uu, it.first.at(1)),
+                                    std::forward_as_tuple(it.second));
+        }
+        else if (it.first.at(0) == g2_uu) {
+            new_connections.emplace(std::piecewise_construct, std::forward_as_tuple(g1_uu, it.first.at(1)),
+                                    std::forward_as_tuple(it.second));
+        }
+        else {
+            new_connections.emplace(it);
+        }
+    }
+    comp.connections = new_connections;
 }
 
 } // namespace horizon

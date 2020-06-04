@@ -6,7 +6,6 @@ PoolBrowserSymbol::PoolBrowserSymbol(Pool *p, const UUID &uu) : PoolBrowser(p), 
 {
     construct();
     name_entry = create_search_entry("Name");
-    search();
     install_pool_item_source_tooltip();
 }
 
@@ -28,6 +27,7 @@ void PoolBrowserSymbol::add_sort_controller_columns()
     sort_controller->add_column(1, "units.name");
     sort_controller->add_column(2, "units.manufacturer");
     path_column = append_column("Path", list_columns.path, Pango::ELLIPSIZE_START);
+    install_column_tooltip(*path_column, list_columns.path);
 }
 
 void PoolBrowserSymbol::set_unit_uuid(const UUID &uu)
@@ -38,9 +38,7 @@ void PoolBrowserSymbol::set_unit_uuid(const UUID &uu)
 
 void PoolBrowserSymbol::search()
 {
-    auto selected_uuid = get_selected();
-    treeview->unset_model();
-    store->clear();
+    prepare_search();
 
     std::string name_search = name_entry->get_text();
 
@@ -62,19 +60,28 @@ void PoolBrowserSymbol::search()
         row[list_columns.name] = "none";
         row[list_columns.unit_name] = "none";
     }
-
-    while (q.step()) {
-        row = *(store->append());
-        row[list_columns.uuid] = q.get<std::string>(0);
-        row[list_columns.name] = q.get<std::string>(1);
-        row[list_columns.unit_name] = q.get<std::string>(2);
-        row[list_columns.unit_manufacturer] = q.get<std::string>(3);
-        row[list_columns.path] = q.get<std::string>(4);
-        row[list_columns.source] = pool_item_source_from_db(q.get<std::string>(5), q.get<int>(6));
+    try {
+        while (q.step()) {
+            row = *(store->append());
+            row[list_columns.uuid] = q.get<std::string>(0);
+            row[list_columns.name] = q.get<std::string>(1);
+            row[list_columns.unit_name] = q.get<std::string>(2);
+            row[list_columns.unit_manufacturer] = q.get<std::string>(3);
+            row[list_columns.path] = q.get<std::string>(4);
+            row[list_columns.source] = pool_item_source_from_db(q.get<std::string>(5), q.get<int>(6));
+        }
+        set_busy(false);
     }
-    treeview->set_model(store);
-    select_uuid(selected_uuid);
-    scroll_to_selection();
+    catch (SQLite::Error &e) {
+        if (e.rc == SQLITE_BUSY) {
+            set_busy(true);
+        }
+        else {
+            throw;
+        }
+    }
+
+    finish_search();
 }
 
 UUID PoolBrowserSymbol::uuid_from_row(const Gtk::TreeModel::Row &row)

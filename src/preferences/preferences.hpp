@@ -4,11 +4,12 @@
 #include <sigc++/sigc++.h>
 #include <string>
 #include "imp/action_catalog.hpp"
-#include "imp/action.hpp"
-#include "core/tool_id.hpp"
 
 namespace horizon {
 using json = nlohmann::json;
+
+enum class ActionID;
+enum class ToolID;
 
 class CanvasPreferences {
 public:
@@ -32,6 +33,8 @@ class BoardPreferences {
 public:
     bool drag_start_track = true;
     bool highlight_on_top = true;
+    bool show_text_in_tracks = true;
+    bool show_text_in_vias = true;
 
     void load_from_json(const json &j);
     json serialize() const;
@@ -39,7 +42,7 @@ public:
 
 class KeySequencesPreferences {
 public:
-    std::map<std::pair<ActionID, ToolID>, std::map<ActionCatalogItem::Availability, std::vector<KeySequence>>> keys;
+    std::map<ActionToolID, std::map<ActionCatalogItem::Availability, std::vector<KeySequence>>> keys;
 
     void load_from_json(const json &j);
     void append_from_json(const json &j);
@@ -50,6 +53,30 @@ class ZoomPreferences {
 public:
     bool smooth_zoom_2d = true;
     bool smooth_zoom_3d = false;
+    bool touchpad_pan = false;
+
+    void load_from_json(const json &j);
+    json serialize() const;
+};
+
+class PartInfoPreferences {
+public:
+    bool enable = false;
+    std::string url = "https://dev-partinfo.kitspace.org/graphql";
+    std::string preferred_distributor;
+    bool ignore_moq_gt_1 = true;
+    unsigned int max_price_breaks = 3;
+    unsigned int cache_days = 5;
+    bool is_enabled() const;
+
+    void load_from_json(const json &j);
+    json serialize() const;
+};
+
+class ActionBarPreferences {
+public:
+    bool enable = true;
+    bool remember = true;
 
     void load_from_json(const json &j);
     json serialize() const;
@@ -72,6 +99,9 @@ public:
     BoardPreferences board;
     KeySequencesPreferences key_sequences;
     ZoomPreferences zoom;
+    bool capture_output = false;
+    PartInfoPreferences partinfo;
+    ActionBarPreferences action_bar;
 
     typedef sigc::signal<void> type_signal_changed;
     type_signal_changed signal_changed()

@@ -5,13 +5,18 @@
 #include "nlohmann/json.hpp"
 #include "logger/logger.hpp"
 #include "util/util.hpp"
+#include <giomm/file.h>
+#include <glibmm/fileutils.h>
+#include <glibmm/miscutils.h>
 
 namespace horizon {
 CorePackage::CorePackage(const std::string &filename, Pool &pool)
-    : package(Package::new_from_file(filename, pool)), m_filename(filename), rules(package.rules),
+    : package(Package::new_from_file(filename, pool)), m_filename(filename),
+      m_pictures_dir(Glib::build_filename(Glib::path_get_dirname(filename), "pictures")), rules(package.rules),
       parameter_program_code(package.parameter_program.get_code()), parameter_set(package.parameter_set),
       models(package.models), default_model(package.default_model)
 {
+    package.load_pictures(m_pictures_dir);
     rebuild();
     m_pool = &pool;
 }
@@ -30,43 +35,13 @@ bool CorePackage::has_object_type(ObjectType ty) const
     case ObjectType::ARC:
     case ObjectType::KEEPOUT:
     case ObjectType::DIMENSION:
+    case ObjectType::PICTURE:
         return true;
         break;
     default:;
     }
 
     return false;
-}
-
-bool CorePackage::can_search_for_object_type(ObjectType ty) const
-{
-    switch (ty) {
-    case ObjectType::PAD:
-        return true;
-        break;
-    default:;
-    }
-
-    return false;
-}
-
-std::list<Core::SearchResult> CorePackage::search(const SearchQuery &q)
-{
-    std::list<Core::SearchResult> results;
-    if (q.query.size() == 0)
-        return results;
-    if (q.types.count(ObjectType::PAD)) {
-        for (const auto &it : package.pads) {
-            if (it.second.name.find(q.query) != std::string::npos) {
-                results.emplace_back(ObjectType::PAD, it.first);
-                auto &x = results.back();
-                x.location = it.second.placement.shift;
-                x.selectable = true;
-            }
-        }
-    }
-    sort_search_results(results, q);
-    return results;
 }
 
 LayerProvider *CorePackage::get_layer_provider()
@@ -74,7 +49,7 @@ LayerProvider *CorePackage::get_layer_provider()
     return &package;
 }
 
-Package *CorePackage::get_package(bool work)
+Package *CorePackage::get_package()
 {
     return &package;
 }
@@ -84,23 +59,23 @@ Rules *CorePackage::get_rules()
     return &rules;
 }
 
-std::map<UUID, Junction> *CorePackage::get_junction_map(bool work)
+std::map<UUID, Junction> *CorePackage::get_junction_map()
 {
     return &package.junctions;
 }
-std::map<UUID, Line> *CorePackage::get_line_map(bool work)
+std::map<UUID, Line> *CorePackage::get_line_map()
 {
     return &package.lines;
 }
-std::map<UUID, Arc> *CorePackage::get_arc_map(bool work)
+std::map<UUID, Arc> *CorePackage::get_arc_map()
 {
     return &package.arcs;
 }
-std::map<UUID, Text> *CorePackage::get_text_map(bool work)
+std::map<UUID, Text> *CorePackage::get_text_map()
 {
     return &package.texts;
 }
-std::map<UUID, Polygon> *CorePackage::get_polygon_map(bool work)
+std::map<UUID, Polygon> *CorePackage::get_polygon_map()
 {
     return &package.polygons;
 }
@@ -112,7 +87,11 @@ std::map<UUID, Dimension> *CorePackage::get_dimension_map()
 {
     return &package.dimensions;
 }
-std::map<UUID, Hole> *CorePackage::get_hole_map(bool work)
+std::map<UUID, Picture> *CorePackage::get_picture_map()
+{
+    return &package.pictures;
+}
+std::map<UUID, Hole> *CorePackage::get_hole_map()
 {
     return nullptr;
 }
@@ -268,27 +247,17 @@ void CorePackage::reload_pool()
     rebuild();
 }
 
-void CorePackage::commit()
-{
-    set_needs_save(true);
-}
-
-void CorePackage::revert()
-{
-    history_load(history_current);
-    reverted = true;
-}
-
 json CorePackage::get_meta()
 {
-    auto j = load_json_from_file(m_filename);
-    if (j.count("_imp")) {
-        return j["_imp"];
-    }
-    return nullptr;
+    return get_meta_from_file(m_filename);
 }
 
-void CorePackage::save()
+const std::string &CorePackage::get_filename() const
+{
+    return m_filename;
+}
+
+void CorePackage::save(const std::string &suffix)
 {
     package.parameter_set = parameter_set;
     package.parameter_program.set_code(parameter_program_code);
@@ -298,10 +267,14 @@ void CorePackage::save()
     s_signal_save.emit();
 
     json j = package.serialize();
-    auto save_meta = s_signal_request_save_meta.emit();
-    j["_imp"] = save_meta;
-    save_json_to_file(m_filename, j);
+    save_json_to_file(m_filename + suffix, j);
+    package.save_pictures(m_pictures_dir);
+}
 
-    set_needs_save(false);
+
+void CorePackage::delete_autosave()
+{
+    if (Glib::file_test(m_filename + autosave_suffix, Glib::FILE_TEST_IS_REGULAR))
+        Gio::File::create_for_path(m_filename + autosave_suffix)->remove();
 }
 } // namespace horizon

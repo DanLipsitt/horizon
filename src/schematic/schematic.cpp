@@ -6,6 +6,7 @@
 #include "nlohmann/json.hpp"
 #include "util/util.hpp"
 #include "logger/logger.hpp"
+#include "util/picture_load.hpp"
 
 namespace horizon {
 
@@ -62,7 +63,7 @@ Schematic::Schematic(const UUID &uu, const json &j, Block &iblock, Pool &pool)
     if (j.count("title_block_values")) {
         const json &o = j["title_block_values"];
         for (auto it = o.cbegin(); it != o.cend(); ++it) {
-            title_block_values[it.key()] = it.value().get<std::string>();
+            block->project_meta[it.key()] = it.value();
         }
     }
     if (j.count("pdf_export_settings")) {
@@ -80,7 +81,7 @@ Schematic::Schematic(const UUID &uu, const json &j, Block &iblock, Pool &pool)
 Schematic Schematic::new_from_file(const std::string &filename, Block &block, Pool &pool)
 {
     auto j = load_json_from_file(filename);
-    return Schematic(UUID(j["uuid"].get<std::string>()), j, block, pool);
+    return Schematic(UUID(j.at("uuid").get<std::string>()), j, block, pool);
 }
 
 Schematic::Schematic(const UUID &uu, Block &bl) : uuid(uu), block(&bl)
@@ -94,6 +95,7 @@ void Schematic::autoconnect_symbol(Sheet *sheet, SchematicSymbol *sym)
 {
     assert(sheet == &sheets.at(sheet->uuid));
     assert(sym == &sheet->symbols.at(sym->uuid));
+    bool connected = false;
     for (auto &it_pin : sym->symbol.pins) {
         auto pin_pos = sym->placement.transform(it_pin.second.position);
         if (sym->component->connections.count(UUIDPath<2>(sym->gate->uuid, it_pin.first)))
@@ -103,8 +105,10 @@ void Schematic::autoconnect_symbol(Sheet *sheet, SchematicSymbol *sym)
             if (!it_junc->second.bus && it_junc->second.position == pin_pos
                 && (it_junc->second.net || it_junc->second.connection_count > 0)) {
                 erase = true;
+                bool net_created = false;
                 if (it_junc->second.net == nullptr) {
                     it_junc->second.net = block->insert_net();
+                    net_created = true;
                 }
                 sym->component->connections.emplace(UUIDPath<2>(sym->gate->uuid, it_pin.first),
                                                     static_cast<Net *>(it_junc->second.net));
@@ -127,6 +131,10 @@ void Schematic::autoconnect_symbol(Sheet *sheet, SchematicSymbol *sym)
                 else {
                     sheet->replace_junction(&it_junc->second, sym, &it_pin.second);
                 }
+                connected = true;
+
+                if (net_created)
+                    expand(true);
             }
             if (erase) {
                 sheet->junctions.erase(it_junc++);
@@ -162,6 +170,7 @@ void Schematic::autoconnect_symbol(Sheet *sheet, SchematicSymbol *sym)
                     line->from.connect(sym, &it_pin.second);
                     line->to.connect(sym_other, &it_pin_other.second);
                     break;
+                    connected = true;
                 }
             }
         }
@@ -174,10 +183,13 @@ void Schematic::autoconnect_symbol(Sheet *sheet, SchematicSymbol *sym)
                 line->net = it_rip.second.bus_member->net;
                 line->from.connect(sym, &it_pin.second);
                 line->to.connect(&it_rip.second);
+                connected = true;
                 break;
             }
         }
     }
+    if (connected)
+        expand(true);
 }
 
 void Schematic::disconnect_symbol(Sheet *sheet, SchematicSymbol *sym)
@@ -227,7 +239,6 @@ void Schematic::smash_symbol(Sheet *sheet, SchematicSymbol *sym)
         auto uu = UUID::random();
         auto &x = sheet->texts.emplace(uu, uu).first->second;
         x.from_smash = true;
-        x.overridden = true;
         x.placement = sym->placement;
         Placement placement = it.second.placement;
         if (sym->symbol.texts.count(it.first)) {
@@ -264,6 +275,183 @@ void Schematic::unsmash_symbol(Sheet *sheet, SchematicSymbol *sym)
     }
 }
 
+bool Schematic::delete_net_line(Sheet *sheet, LineNet *line)
+{
+    bool split = false;
+    if (line->net) {
+        for (auto &it_ft : {line->from, line->to}) {
+            if (it_ft.is_pin()) {
+                UUIDPath<2> conn_path(it_ft.symbol->gate.uuid, it_ft.pin->uuid);
+                if (it_ft.symbol->component->connections.count(conn_path)
+                    && it_ft.pin->connected_net_lines.size() <= 1) {
+                    it_ft.symbol->component->connections.erase(conn_path);
+                }
+                // prevents error in update_refs
+                it_ft.pin->connected_net_lines.erase(line->uuid);
+            }
+        }
+    }
+    auto from = line->from;
+    auto to = line->to;
+    Net *net = line->net;
+    sheet->net_lines.erase(line->uuid);
+    line = nullptr;
+    sheet->propagate_net_segments();
+    if (net) {
+        UUID from_net_segment = from.get_net_segment();
+        UUID to_net_segment = to.get_net_segment();
+        if (from_net_segment != to_net_segment) {
+            auto pins_from = sheet->get_pins_connected_to_net_segment(from_net_segment);
+            auto pins_to = sheet->get_pins_connected_to_net_segment(to_net_segment);
+            std::cout << "!!!net split" << std::endl;
+            if (!net->is_named() && !net->is_power && !net->is_bussed) {
+                // net is unnamed, not bussed and not a power net, user
+                // does't care which pins get extracted
+                // imp->tool_bar_flash("net split");
+                block->extract_pins(pins_to);
+            }
+            else if (net->is_power) {
+                auto ns_info = sheet->analyze_net_segments();
+                if (ns_info.count(from_net_segment) && ns_info.count(to_net_segment)) {
+                    auto &inf_from = ns_info.at(from_net_segment);
+                    auto &inf_to = ns_info.at(to_net_segment);
+                    if (inf_from.has_power_sym && inf_to.has_power_sym) {
+                        // both have label, don't need to split net
+                    }
+                    else if (inf_from.has_power_sym && !inf_to.has_power_sym) {
+                        // from has label, to not, extracts pins on to
+                        // net segment
+                        // imp->tool_bar_flash("net split");
+                        block->extract_pins(pins_to);
+                    }
+                    else if (!inf_from.has_power_sym && inf_to.has_power_sym) {
+                        // to has label, from not, extract pins on from
+                        // segment
+                        // imp->tool_bar_flash("net split");
+                        block->extract_pins(pins_from);
+                    }
+                    else {
+                        // imp->tool_bar_flash("net split");
+                        block->extract_pins(pins_from);
+                    }
+                }
+            }
+            else {
+                auto ns_info = sheet->analyze_net_segments();
+                if (ns_info.count(from_net_segment) && ns_info.count(to_net_segment)) {
+                    auto &inf_from = ns_info.at(from_net_segment);
+                    auto &inf_to = ns_info.at(to_net_segment);
+                    if (inf_from.has_label && inf_to.has_label) {
+                        // both have label, don't need to split net
+                    }
+                    else if (inf_from.has_label && !inf_to.has_label) {
+                        // from has label, to not, extracts pins on to
+                        // net segment
+                        // imp->tool_bar_flash("net split");
+                        block->extract_pins(pins_to);
+                    }
+                    else if (!inf_from.has_label && inf_to.has_label) {
+                        // to has label, from not, extract pins on from
+                        // segment
+                        // imp->tool_bar_flash("net split");
+                        block->extract_pins(pins_from);
+                    }
+                    else if (!inf_from.has_label && !inf_to.has_label) {
+                        // both segments are unlabeled, so don't care
+                        // imp->tool_bar_flash("net split");
+                        block->extract_pins(pins_from);
+                    }
+                }
+            }
+        }
+    }
+    return split;
+}
+
+bool Schematic::place_bipole_on_line(Sheet *sheet, SchematicSymbol *sym)
+{
+    bool placed = false;
+    if (sym->symbol.pins.size() == 2) {
+        auto it_sym = sym->symbol.pins.begin();
+        auto &pin1 = it_sym->second;
+        it_sym++;
+        auto &pin2 = it_sym->second;
+        if ((pin1.position.x == pin2.position.x) || (pin1.position.y == pin2.position.y)) {
+            std::cout << "place bipole" << std::endl;
+            auto pin1_pos = sym->placement.transform(pin1.position);
+            auto pin2_pos = sym->placement.transform(pin2.position);
+            LineNet *line = nullptr;
+            for (auto it : sheet->net_lines) {
+                auto &li = it.second;
+                if ((li.coord_on_line(pin1_pos) || li.from.get_position() == pin1_pos
+                     || li.to.get_position() == pin1_pos)
+                    && (li.coord_on_line(pin2_pos) || li.from.get_position() == pin2_pos
+                        || li.to.get_position() == pin2_pos)) {
+                    line = &li;
+                    break;
+                }
+            }
+            if (line) {
+                auto from = line->from;
+                auto to = line->to;
+                delete_net_line(sheet, line);
+                line = nullptr;
+                expand(true);
+                from.update_refs(*sheet);
+                to.update_refs(*sheet);
+
+                UUID from_net_segment = from.get_net_segment();
+                UUID to_net_segment = to.get_net_segment();
+                auto ns_info = sheet->analyze_net_segments(false);
+                Net *net_from = nullptr;
+                Net *net_to = nullptr;
+                if (ns_info.count(from_net_segment))
+                    net_from = ns_info.at(from_net_segment).net;
+                else if (from.is_bus_ripper())
+                    net_from = from.bus_ripper->bus_member->net;
+
+                if (ns_info.count(to_net_segment))
+                    net_to = ns_info.at(to_net_segment).net;
+                else if (to.is_bus_ripper())
+                    net_to = to.bus_ripper->bus_member->net;
+
+                // normal pin1-from pin2-to
+                // swapped pin1-to pin2-from
+                auto dst_normal = (pin1_pos - from.get_position()).mag_sq() + (pin2_pos - to.get_position()).mag_sq();
+                auto dst_swapped = (pin2_pos - from.get_position()).mag_sq() + (pin1_pos - to.get_position()).mag_sq();
+                SymbolPin *pin_from = &pin1;
+                SymbolPin *pin_to = &pin2;
+                if (dst_swapped < dst_normal) {
+                    std::swap(pin_from, pin_to);
+                }
+                auto connect_pin = [this, sheet, sym](SymbolPin &pin, const LineNet::Connection &conn, Net *net) {
+                    bool new_net = !net;
+                    if (!net)
+                        net = block->insert_net();
+
+                    auto uu = UUID::random();
+                    auto &new_line = sheet->net_lines.emplace(uu, uu).first->second;
+                    new_line.from = conn;
+                    new_line.to.connect(sym, &pin);
+                    new_line.net = net;
+                    sym->component->connections.emplace(std::piecewise_construct,
+                                                        std::forward_as_tuple(sym->gate->uuid, pin.uuid),
+                                                        std::forward_as_tuple(net));
+                    if (conn.is_pin() && new_net) {
+                        conn.symbol->component->connections.emplace(
+                                std::piecewise_construct,
+                                std::forward_as_tuple(conn.symbol->gate->uuid, conn.pin->uuid),
+                                std::forward_as_tuple(net));
+                    }
+                };
+                connect_pin(*pin_from, from, net_from);
+                connect_pin(*pin_to, to, net_to);
+                placed = true;
+            }
+        }
+    }
+    return placed;
+}
 
 void Schematic::expand(bool careful)
 {
@@ -282,6 +470,9 @@ void Schematic::expand(bool careful)
         for (auto &it_sym : sheet.power_symbols) {
             it_sym.second.net->is_power = true;
             it_sym.second.net->is_power_forced = true;
+        }
+        for (auto &it : sheet.texts) {
+            it.second.overridden = false;
         }
     }
 
@@ -348,7 +539,8 @@ void Schematic::expand(bool careful)
                                        [&sheet](const auto &a) { return sheet.texts.count(a.uuid) == 0; }),
                         texts.end());
         }
-        sheet.expand_symbols(*this);
+        if (!careful)
+            sheet.expand_symbols(*this);
     }
 
 
@@ -358,7 +550,6 @@ void Schematic::expand(bool careful)
         for (auto &it_junc : sheet.junctions) {
             it_junc.second.net = nullptr;
             it_junc.second.bus = nullptr;
-            it_junc.second.temp = false;
         }
         for (auto &it_line : sheet.net_lines) {
             it_line.second.net = nullptr;
@@ -590,7 +781,7 @@ void Schematic::expand(bool careful)
     for (auto &it_sheet : sheets) {
         Sheet &sheet = it_sheet.second;
         if (sheet.pool_frame) {
-            std::map<std::string, std::string> values = title_block_values;
+            std::map<std::string, std::string> values = block->project_meta;
             for (const auto &it_v : sheet.title_block_values) {
                 values[it_v.first] = it_v.second;
             }
@@ -602,6 +793,33 @@ void Schematic::expand(bool careful)
                 replace_substr(txt, "$sheet_title", sheet.name);
                 for (const auto &it_v : values) {
                     replace_substr(txt, "$" + it_v.first, it_v.second);
+                }
+            }
+        }
+    }
+
+    if (!careful) {
+        for (auto &it_sheet : sheets) {
+            Sheet &sheet = it_sheet.second;
+            for (auto &it_text : sheet.texts) {
+                auto &text = it_text.second;
+                if (!text.overridden) {
+                    Glib::ustring txt = text.text;
+                    Glib::MatchInfo ma;
+                    int start, end;
+                    while (get_sheetref_regex()->match(txt, ma) && ma.fetch_pos(0, start, end)) {
+                        auto ref_uuid = UUID(ma.fetch(1));
+                        if (sheets.count(ref_uuid)) {
+                            std::stringstream ss;
+                            ss << "[" << sheets.at(ref_uuid).index << "]";
+                            txt.replace(start, end - start, ss.str());
+                        }
+                        else {
+                            txt.replace(start, end - start, "[?]");
+                        }
+                        text.overridden = true;
+                    }
+                    text.text_override = txt;
                 }
             }
         }
@@ -694,7 +912,7 @@ void Schematic::annotate()
                     if (annotation.fill_gaps && v.size() >= 2) {
                         bool hole = false;
                         for (auto it = v.begin(); it < v.end() - 1; it++) {
-                            if (*(it + 1) != (*it) + 1) {
+                            if (*it > sheet_offset && *(it + 1) != (*it) + 1) {
                                 n = (*it) + 1;
                                 hole = true;
                                 break;
@@ -723,25 +941,63 @@ void Schematic::annotate()
     }
 }
 
-Schematic::Schematic(const Schematic &sch)
-    : uuid(sch.uuid), block(sch.block), name(sch.name), sheets(sch.sheets), rules(sch.rules),
-      title_block_values(sch.title_block_values), group_tag_visible(sch.group_tag_visible), annotation(sch.annotation),
-      pdf_export_settings(sch.pdf_export_settings)
+std::map<UUIDPath<2>, std::string> Schematic::get_unplaced_gates() const
 {
-    update_refs();
+    std::map<UUIDPath<2>, std::string> unplaced;
+    // collect gates
+    std::set<std::pair<const Component *, const Gate *>> gates;
+
+    // find all gates
+    for (const auto &it_component : block->components) {
+        for (const auto &it_gate : it_component.second.entity->gates) {
+            gates.emplace(&it_component.second, &it_gate.second);
+        }
+    }
+
+    // remove placed gates
+    for (auto &it_sheet : sheets) {
+        const auto &sheet = it_sheet.second;
+
+        for (const auto &it_sym : sheet.symbols) {
+            const auto &sym = it_sym.second;
+            gates.erase({sym.component, sym.gate});
+        }
+    }
+    for (const auto &it : gates) {
+        unplaced.emplace(std::piecewise_construct, std::forward_as_tuple(it.first->uuid, it.second->uuid),
+                         std::forward_as_tuple(it.first->refdes + it.second->suffix));
+    }
+    return unplaced;
 }
 
-void Schematic::operator=(const Schematic &sch)
+void Schematic::swap_gates(const UUID &comp_uu, const UUID &g1_uu, const UUID &g2_uu)
 {
-    uuid = sch.uuid;
-    block = sch.block;
-    name = sch.name;
-    sheets = sch.sheets;
-    rules = sch.rules;
-    title_block_values = sch.title_block_values;
-    group_tag_visible = sch.group_tag_visible;
-    annotation = sch.annotation;
-    pdf_export_settings = sch.pdf_export_settings;
+    block->swap_gates(comp_uu, g1_uu, g2_uu);
+    auto entity = block->components.at(comp_uu).entity;
+    for (auto &it_sheet : sheets) {
+        for (auto &it_sym : it_sheet.second.symbols) {
+            if (it_sym.second.gate->uuid == g1_uu) {
+                it_sym.second.gate = &entity->gates.at(g2_uu);
+            }
+            else if (it_sym.second.gate->uuid == g2_uu) {
+                it_sym.second.gate = &entity->gates.at(g1_uu);
+            }
+        }
+    }
+}
+
+Glib::RefPtr<Glib::Regex> Schematic::get_sheetref_regex()
+{
+    static auto regex =
+            Glib::Regex::create(R"(\$sheetref:([a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89aAbB][a-f0-9]{3}-[a-f0-9]{12}))",
+                                Glib::RegexCompileFlags::REGEX_CASELESS | Glib::RegexCompileFlags::REGEX_OPTIMIZE);
+    return regex;
+}
+
+Schematic::Schematic(const Schematic &sch)
+    : uuid(sch.uuid), block(sch.block), name(sch.name), sheets(sch.sheets), rules(sch.rules),
+      group_tag_visible(sch.group_tag_visible), annotation(sch.annotation), pdf_export_settings(sch.pdf_export_settings)
+{
     update_refs();
 }
 
@@ -809,8 +1065,8 @@ json Schematic::serialize() const
     j["annotation"] = annotation.serialize();
     j["pdf_export_settings"] = pdf_export_settings.serialize_schematic();
     j["rules"] = rules.serialize();
-    j["title_block_values"] = title_block_values;
     j["group_tag_visible"] = group_tag_visible;
+    j["title_block_values"] = block->project_meta;
 
     j["sheets"] = json::object();
     for (const auto &it : sheets) {
@@ -819,4 +1075,24 @@ json Schematic::serialize() const
 
     return j;
 }
+
+
+void Schematic::save_pictures(const std::string &dir) const
+{
+    std::list<const std::map<UUID, Picture> *> pictures;
+    for (const auto &it : sheets) {
+        pictures.push_back(&it.second.pictures);
+    }
+    pictures_save(pictures, dir, "sch");
+}
+
+void Schematic::load_pictures(const std::string &dir)
+{
+    std::list<std::map<UUID, Picture> *> pictures;
+    for (auto &it : sheets) {
+        pictures.push_back(&it.second.pictures);
+    }
+    pictures_load(pictures, dir, "sch");
+}
+
 } // namespace horizon

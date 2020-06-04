@@ -10,7 +10,6 @@ PoolBrowserEntity::PoolBrowserEntity(Pool *p) : PoolBrowser(p)
     name_entry = create_search_entry("Name");
     tag_entry = create_tag_entry("Tags");
     install_pool_item_source_tooltip();
-    search();
 }
 
 Glib::RefPtr<Gtk::ListStore> PoolBrowserEntity::create_list_store()
@@ -24,8 +23,12 @@ void PoolBrowserEntity::create_columns()
     treeview->append_column("Manufacturer", list_columns.entity_manufacturer);
     treeview->append_column("Prefix", list_columns.prefix);
     treeview->append_column("Gates", list_columns.n_gates);
-    treeview->append_column("Tags", list_columns.tags);
+    {
+        auto col = append_column("Tags", list_columns.tags);
+        install_column_tooltip(*col, list_columns.tags);
+    }
     path_column = append_column("Path", list_columns.path, Pango::ELLIPSIZE_START);
+    install_column_tooltip(*path_column, list_columns.path);
 }
 
 void PoolBrowserEntity::add_sort_controller_columns()
@@ -36,9 +39,7 @@ void PoolBrowserEntity::add_sort_controller_columns()
 
 void PoolBrowserEntity::search()
 {
-    auto selected_uuid = get_selected();
-    treeview->unset_model();
-    store->clear();
+    prepare_search();
 
     std::string name_search = name_entry->get_text();
 
@@ -90,21 +91,29 @@ void PoolBrowserEntity::search()
         row[list_columns.uuid] = UUID();
         row[list_columns.entity_name] = "none";
     }
-
-    while (q.step()) {
-        row = *(store->append());
-        row[list_columns.uuid] = q.get<std::string>(0);
-        row[list_columns.entity_name] = q.get<std::string>(1);
-        row[list_columns.prefix] = q.get<std::string>(2);
-        row[list_columns.n_gates] = q.get<int>(3);
-        row[list_columns.tags] = q.get<std::string>(4);
-        row[list_columns.entity_manufacturer] = q.get<std::string>(5);
-        row[list_columns.path] = q.get<std::string>(6);
-        row[list_columns.source] = pool_item_source_from_db(q.get<std::string>(7), q.get<int>(8));
+    try {
+        while (q.step()) {
+            row = *(store->append());
+            row[list_columns.uuid] = q.get<std::string>(0);
+            row[list_columns.entity_name] = q.get<std::string>(1);
+            row[list_columns.prefix] = q.get<std::string>(2);
+            row[list_columns.n_gates] = q.get<int>(3);
+            row[list_columns.tags] = q.get<std::string>(4);
+            row[list_columns.entity_manufacturer] = q.get<std::string>(5);
+            row[list_columns.path] = q.get<std::string>(6);
+            row[list_columns.source] = pool_item_source_from_db(q.get<std::string>(7), q.get<int>(8));
+        }
+        set_busy(false);
     }
-    treeview->set_model(store);
-    select_uuid(selected_uuid);
-    scroll_to_selection();
+    catch (SQLite::Error &e) {
+        if (e.rc == SQLITE_BUSY) {
+            set_busy(true);
+        }
+        else {
+            throw;
+        }
+    }
+    finish_search();
 }
 
 UUID PoolBrowserEntity::uuid_from_row(const Gtk::TreeModel::Row &row)

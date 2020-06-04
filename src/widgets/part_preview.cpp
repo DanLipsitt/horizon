@@ -9,7 +9,7 @@
 #include "entity_preview.hpp"
 
 namespace horizon {
-PartPreview::PartPreview(class Pool &p, bool show_goto) : Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0), pool(p)
+PartPreview::PartPreview(class Pool &p, bool sgoto) : Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0), pool(p), show_goto(sgoto)
 {
     auto infogrid = Gtk::manage(new Gtk::Grid());
     infogrid->property_margin() = 8;
@@ -62,6 +62,7 @@ PartPreview::PartPreview(class Pool &p, bool show_goto) : Gtk::Box(Gtk::ORIENTAT
     label_description->set_hexpand(true);
     label_description->set_halign(Gtk::ALIGN_START);
     label_description->set_selectable(true);
+    label_description->set_ellipsize(Pango::ELLIPSIZE_END);
     infogrid->attach(*label_description, 1, 1, 1, 1);
 
     {
@@ -96,6 +97,15 @@ PartPreview::PartPreview(class Pool &p, bool show_goto) : Gtk::Box(Gtk::ORIENTAT
             false);
     infogrid->attach(*label_entity, 5, 1, 1, 1);
 
+    label_orderable_MPNs_title = Gtk::manage(new Gtk::Label("Orderable MPNs"));
+    label_orderable_MPNs_title->get_style_context()->add_class("dim-label");
+    label_orderable_MPNs_title->set_halign(Gtk::ALIGN_END);
+    infogrid->attach(*label_orderable_MPNs_title, 0, 2, 1, 1);
+
+    box_orderable_MPNs = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
+    box_orderable_MPNs->set_hexpand(true);
+    box_orderable_MPNs->set_halign(Gtk::ALIGN_START);
+    infogrid->attach(*box_orderable_MPNs, 1, 2, 5, 1);
 
     infogrid->show_all();
     pack_start(*infogrid, false, false, 0);
@@ -167,10 +177,13 @@ void PartPreview::load(const Part *p)
         label_value->set_text("");
         label_manufacturer->set_text("");
         label_description->set_text("");
+        label_description->set_has_tooltip(false);
         label_datasheet->set_text("");
         label_entity->set_text("");
         canvas_package->clear();
         entity_preview->clear();
+        label_orderable_MPNs_title->hide();
+        box_orderable_MPNs->hide();
         return;
     }
 
@@ -178,6 +191,7 @@ void PartPreview::load(const Part *p)
     label_value->set_text(part->get_value());
     label_manufacturer->set_text(part->get_manufacturer());
     label_description->set_text(part->get_description());
+    label_description->set_tooltip_text(part->get_description());
     auto datasheet = part->get_datasheet();
     if (datasheet.size()) {
         label_datasheet->set_markup("<a href=\"" + Glib::Markup::escape_text(datasheet) + "\">"
@@ -187,8 +201,30 @@ void PartPreview::load(const Part *p)
     else {
         label_datasheet->set_text("");
     }
-    label_entity->set_markup("<a href=\"" + (std::string)part->entity->uuid + "\">"
-                             + Glib::Markup::escape_text(part->entity->name) + "</a>");
+    if (show_goto)
+        label_entity->set_markup("<a href=\"" + (std::string)part->entity->uuid + "\">"
+                                 + Glib::Markup::escape_text(part->entity->name) + "</a>");
+    else
+        label_entity->set_text(part->entity->name);
+
+    if (part->orderable_MPNs.size()) {
+        label_orderable_MPNs_title->show();
+        box_orderable_MPNs->show();
+        auto children = box_orderable_MPNs->get_children();
+        for (auto ch : children)
+            delete ch;
+        for (const auto &it : part->orderable_MPNs) {
+            auto la = Gtk::manage(new Gtk::Label(it.second));
+            la->set_selectable(true);
+            la->set_xalign(0);
+            box_orderable_MPNs->pack_start(*la, false, false, 0);
+            la->show();
+        }
+    }
+    else {
+        label_orderable_MPNs_title->hide();
+        box_orderable_MPNs->hide();
+    }
 
     std::vector<const Gate *> gates;
     gates.reserve(part->entity->gates.size());

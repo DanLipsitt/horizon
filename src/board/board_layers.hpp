@@ -7,6 +7,7 @@ class BoardLayers {
 public:
     enum Layer {
         TOP_NOTES = 200,
+        OUTLINE_NOTES = 110,
         L_OUTLINE = 100,
         TOP_COURTYARD = 60,
         TOP_ASSEMBLY = 50,
@@ -32,6 +33,11 @@ public:
     static bool is_copper(int l)
     {
         return l <= TOP_COPPER && l >= BOTTOM_COPPER;
+    }
+
+    static bool is_silkscreen(int l)
+    {
+        return l == TOP_SILKSCREEN || l == BOTTOM_SILKSCREEN;
     }
 
     static std::string get_layer_name(int l);

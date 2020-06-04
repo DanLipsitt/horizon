@@ -2,6 +2,7 @@
 #include <fstream>
 #include <giomm.h>
 #include <glibmm/miscutils.h>
+#include <glib/gstdio.h>
 #include <unistd.h>
 #ifdef G_OS_WIN32
 #include <windows.h>
@@ -10,6 +11,7 @@
 #include <iomanip>
 #include "nlohmann/json.hpp"
 #include "alphanum/alphanum.hpp"
+#include <gdk/gdkkeysyms.h>
 
 namespace horizon {
 
@@ -390,6 +392,18 @@ std::string format_m_of_n(unsigned int m, unsigned int n)
     return prefix + m_str + "/" + n_str;
 }
 
+std::string format_digits(unsigned int m, unsigned int digits_max)
+{
+    auto m_str = std::to_string(m);
+    std::string prefix;
+    if (m_str.size() < digits_max) {
+        for (size_t i = 0; i < (digits_max - (int)m_str.size()); i++) {
+            prefix += " ";
+        }
+    }
+    return prefix + m_str;
+}
+
 double parse_si(const std::string &inps)
 {
     static const auto regex = Glib::Regex::create(
@@ -450,6 +464,87 @@ double parse_si(const std::string &inps)
     }
 
     return NAN;
+}
+
+void rmdir_recursive(const std::string &dir_name)
+{
+    Glib::Dir dir(dir_name);
+    std::list<std::string> entries(dir.begin(), dir.end());
+    for (const auto &it : entries) {
+        auto filename = Glib::build_filename(dir_name, it);
+        if (Glib::file_test(filename, Glib::FILE_TEST_IS_DIR)) {
+            rmdir_recursive(filename);
+        }
+        else {
+            if (g_unlink(filename.c_str()) != 0)
+                throw std::runtime_error("g_unlink");
+        }
+    }
+    if (g_rmdir(dir_name.c_str()) != 0)
+        throw std::runtime_error("g_rmdir");
+}
+
+std::string replace_placeholders(const std::string &s, std::function<std::string(const std::string &)> fn,
+                                 bool keep_empty)
+{
+    std::string r;
+    r.reserve(s.size());
+    std::string var_current;
+    bool var_mode = false;
+    for (const auto &it : s) {
+        if (var_mode) {
+            if (std::isspace(it)) {
+                auto repl = fn(var_current);
+                if (repl.size()) {
+                    r += repl;
+                }
+                else if (keep_empty) {
+                    r += "$" + var_current;
+                }
+                r += it;
+                var_current.clear();
+                var_mode = false;
+            }
+            else {
+                var_current += it;
+            }
+        }
+        else {
+            if (it == '$') {
+                var_mode = true;
+            }
+            else {
+                r += it;
+            }
+        }
+    }
+    if (var_mode) {
+        auto repl = fn(var_current);
+        if (repl.size()) {
+            r += repl;
+        }
+        else if (keep_empty) {
+            r += "$" + var_current;
+        }
+    }
+    return r;
+}
+
+
+Coordi dir_from_arrow_key(unsigned int key)
+{
+    switch (key) {
+    case GDK_KEY_Up:
+        return {0, 1};
+    case GDK_KEY_Down:
+        return {0, -1};
+    case GDK_KEY_Left:
+        return {-1, 0};
+    case GDK_KEY_Right:
+        return {1, 0};
+    default:
+        return {0, 0};
+    }
 }
 
 } // namespace horizon

@@ -20,6 +20,11 @@ void CanvasGL::remove_annotation(CanvasAnnotation *a)
         triangles.erase(layer);
 }
 
+bool CanvasGL::layer_is_annotation(int l) const
+{
+    return annotations.count(l);
+}
+
 CanvasAnnotation::CanvasAnnotation(CanvasGL *c, int l) : ca(c), layer(l)
 {
     LayerDisplay ld(false, LayerDisplay::Mode::FILL_ONLY);
@@ -43,7 +48,7 @@ void CanvasAnnotation::clear()
     ca->request_push();
 }
 
-void CanvasAnnotation::draw_line(const Coordi &from, const Coordi &to, ColorP color, uint64_t width)
+void CanvasAnnotation::draw_line(const Coordf &from, const Coordf &to, ColorP color, uint64_t width)
 {
     ca->draw_line(from, to, color, layer, false, width);
     ca->request_push();

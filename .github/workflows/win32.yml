@@ -1,0 +1,58 @@
+name: Build Windows binaries
+
+on:
+  push:
+    branches: [ '*' ]
+    tags: [ '*' ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build-win32:
+    runs-on: windows-latest
+    steps:
+    - name: Check tag
+      if: startsWith(github.ref, 'refs/tags/')
+      run: echo "Building tag ${{ github.ref }}"
+    - uses: actions/checkout@v2
+    - name: Add msys2 to path
+      shell: cmd
+      run: |
+        echo ::add-path::C:\MSYS64\usr\bin
+        echo ::set-env name=MSYSTEM::MINGW64
+        echo ::set-env name=MSYS2_PATH_TYPE::strict
+    - name: Install updates
+      shell: cmd
+      run: |
+        bash -c "pacman -Syu --noconfirm"
+        bash -c "pacman -Syu --noconfirm"
+    - name: Install dependencies
+      shell: cmd
+      run: bash -ilc "cd $OLDPWD && pacman -S --noconfirm --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-{gcc,gtkmm3,boost,sqlite3,toolchain,zeromq,glm,libgit2,oce,podofo,libzip} zip make git dos2unix"
+    - name: Build
+      shell: cmd
+      run: bash -ilc "cd $OLDPWD && make -j2"
+    - name: Make dist
+      shell: cmd
+      run: bash -ilc "cd $OLDPWD && ./make_bindist.sh -n"
+    - name: Check for missing DLLs
+      shell: cmd
+      run: bash -ilc "cd $OLDPWD && ./check_dll.sh"
+    - name: set artifact name
+      shell: bash
+      run: echo "::set-env name=artifact_name::horizon-win64-$(date +%Y-%m-%d-%H%M)"
+    - uses: actions/upload-artifact@v2-preview
+      with:
+        name: ${{ env.artifact_name }}
+        path: dist/
+    - name: Build MSI
+      if: startsWith(github.ref, 'refs/tags/')
+      run: |
+        $env:PATH += ";$($Env:WIX)\bin"
+        cd wix
+        .\install.bat
+    - uses: actions/upload-artifact@v2-preview
+      if: startsWith(github.ref, 'refs/tags/')
+      with:
+        name: horizon-win64-installer
+        path: wix/*.msi

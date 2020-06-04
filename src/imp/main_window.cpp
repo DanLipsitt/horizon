@@ -15,6 +15,7 @@ MainWindow::MainWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder>
     x->get_widget("grid_box", grid_box);
     x->get_widget("grid_mul_label", grid_mul_label);
     x->get_widget("cursor_label", cursor_label);
+    x->get_widget("selection_mode_label", selection_mode_label);
     x->get_widget("property_viewport", property_viewport);
     x->get_widget("tool_bar", tool_bar);
     x->get_widget("tool_bar_label", tool_bar_name_label);
@@ -32,6 +33,7 @@ MainWindow::MainWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder>
     x->get_widget("nonmodal_close_button", nonmodal_close_button);
     x->get_widget("nonmodal_label", nonmodal_label);
     x->get_widget("nonmodal_label2", nonmodal_label2);
+    x->get_widget("view_hints_label", view_hints_label);
 
     x->get_widget("search_revealer", search_revealer);
     x->get_widget("search_entry", search_entry);
@@ -40,6 +42,10 @@ MainWindow::MainWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder>
     x->get_widget("search_status_label", search_status_label);
     x->get_widget("search_types_box", search_types_box);
     x->get_widget("search_expander", search_expander);
+    x->get_widget("search_exact_cb", search_exact_cb);
+    x->get_widget("action_bar_revealer", action_bar_revealer);
+    x->get_widget("action_bar_box", action_bar_box);
+    x->get_widget("view_options_button", view_options_button);
     search_revealer->set_reveal_child(false);
 
     nonmodal_close_button->signal_clicked().connect([this] { nonmodal_rev->set_reveal_child(false); });
@@ -61,6 +67,7 @@ MainWindow::MainWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder>
     canvas->show();
     tool_bar_set_visible(false);
     hud->set_reveal_child(false);
+    set_use_action_bar(false);
 }
 
 void MainWindow::tool_bar_set_visible(bool v)
@@ -99,7 +106,7 @@ void MainWindow::tool_bar_flash(const std::string &s)
                 tool_bar_queue_close = false;
                 return false;
             },
-            1000);
+            2000);
 }
 
 void MainWindow::hud_update(const std::string &s)
@@ -135,11 +142,39 @@ void MainWindow::show_nonmodal(const std::string &la, const std::string &button,
     nonmodal_rev->set_reveal_child(true);
 }
 
+void MainWindow::set_view_hints_label(const std::vector<std::string> &s)
+{
+    if (s.size()) {
+        std::string label_text;
+        std::string tooltip_text;
+        for (const auto &it : s) {
+            if (label_text.size())
+                label_text += ", ";
+            if (tooltip_text.size())
+                tooltip_text += "\n";
+            label_text += it;
+            tooltip_text += it;
+        }
+        view_hints_label->set_markup("<b>" + Glib::Markup::escape_text(label_text) + "</b>");
+        view_hints_label->set_tooltip_text(tooltip_text);
+    }
+    else {
+        view_hints_label->set_text("View & Selection");
+        view_hints_label->set_has_tooltip(false);
+    }
+}
+
+void MainWindow::set_use_action_bar(bool u)
+{
+    action_bar_revealer->set_visible(u);
+    hud->set_margin_start(u ? 100 : 20);
+}
+
 MainWindow *MainWindow::create()
 {
     MainWindow *w;
     Glib::RefPtr<Gtk::Builder> x = Gtk::Builder::create();
-    x->add_from_resource("/net/carrotIndustries/horizon/window.ui");
+    x->add_from_resource("/org/horizon-eda/horizon/imp/window.ui");
     x->get_widget_derived("mainWindow", w);
     return w;
 }

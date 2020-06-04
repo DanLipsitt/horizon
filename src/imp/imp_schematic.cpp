@@ -7,17 +7,22 @@
 #include "util/gtk_util.hpp"
 #include "util/util.hpp"
 #include "util/str_util.hpp"
-#include "hud_util.hpp"
+#include "util/selection_util.hpp"
 #include "bom_export_window.hpp"
 #include "pdf_export_window.hpp"
 #include "nlohmann/json.hpp"
-#include "core/tool_backannotate_connection_lines.hpp"
+#include "core/tools/tool_backannotate_connection_lines.hpp"
+#include "core/tools/tool_add_part.hpp"
+#include "core/tools/tool_map_symbol.hpp"
+#include "widgets/unplaced_box.hpp"
+#include "core/tool_id.hpp"
+#include "widgets/action_button.hpp"
 
 namespace horizon {
 ImpSchematic::ImpSchematic(const std::string &schematic_filename, const std::string &block_filename,
-                           const PoolParams &pool_params)
-    : ImpBase(pool_params), core_schematic(schematic_filename, block_filename, *pool),
-      project_dir(Glib::path_get_dirname(schematic_filename))
+                           const std::string &pictures_dir, const PoolParams &pool_params)
+    : ImpBase(pool_params), core_schematic(schematic_filename, block_filename, pictures_dir, *pool),
+      project_dir(Glib::path_get_dirname(schematic_filename)), searcher(core_schematic)
 {
     core = &core_schematic;
     core_schematic.signal_tool_changed().connect(sigc::mem_fun(*this, &ImpSchematic::handle_tool_change));
@@ -28,6 +33,7 @@ void ImpSchematic::canvas_update()
 {
     canvas->update(*core_schematic.get_canvas_data());
     warnings_box->update(core_schematic.get_sheet()->warnings);
+    update_highlights();
 }
 
 void ImpSchematic::handle_select_sheet(Sheet *sh)
@@ -37,12 +43,21 @@ void ImpSchematic::handle_select_sheet(Sheet *sh)
 
     auto v = canvas->get_scale_and_offset();
     sheet_views[core_schematic.get_sheet()->uuid] = v;
+    sheet_selections[core_schematic.get_sheet()->uuid] = canvas->get_selection();
+    auto highlights_saved = highlights;
     core_schematic.set_sheet(sh->uuid);
     canvas_update();
     if (sheet_views.count(sh->uuid)) {
         auto v2 = sheet_views.at(sh->uuid);
         canvas->set_scale_and_offset(v2.first, v2.second);
     }
+    if (sheet_selections.count(sh->uuid)) {
+        canvas->set_selection(sheet_selections.at(sh->uuid));
+    }
+    else {
+        canvas->set_selection({});
+    }
+    highlights = highlights_saved;
     update_highlights();
 }
 
@@ -102,6 +117,14 @@ void ImpSchematic::update_highlights()
                     }
                 }
             }
+            else if (it.type == ObjectType::SCHEMATIC_SYMBOL) {
+                if (sheet->symbols.count(it.uuid))
+                    highlights_for_sheet[sheet->uuid].emplace(it);
+            }
+            else if (it.type == ObjectType::SYMBOL_PIN) {
+                if (sheet->symbols.count(it.uuid2))
+                    highlights_for_sheet[sheet->uuid].emplace(it);
+            }
         }
         sheet_box->update_highlights(sheet->uuid, highlights_for_sheet[sheet->uuid].size());
     }
@@ -123,13 +146,13 @@ bool ImpSchematic::handle_broadcast(const json &j)
         guint32 timestamp = j.value("time", 0);
         if (op == "place-part") {
             main_window->present(timestamp);
-            part_from_project_manager = j.at("part").get<std::string>();
-            tool_begin(ToolID::ADD_PART);
+            auto data = std::make_unique<ToolAddPart::ToolDataAddPart>(j.at("part").get<std::string>());
+            tool_begin(ToolID::ADD_PART, false, {}, std::move(data));
         }
         else if (op == "assign-part") {
             main_window->present(timestamp);
-            part_from_project_manager = j.at("part").get<std::string>();
-            tool_begin(ToolID::ASSIGN_PART);
+            auto data = std::make_unique<ToolAddPart::ToolDataAddPart>(j.at("part").get<std::string>());
+            tool_begin(ToolID::ASSIGN_PART, false, {}, std::move(data));
         }
         else if (op == "highlight" && cross_probing_enabled) {
             if (!core_schematic.tool_is_active()) {
@@ -161,6 +184,10 @@ bool ImpSchematic::handle_broadcast(const json &j)
                 main_window->present(timestamp);
                 tool_begin(ToolID::BACKANNOTATE_CONNECTION_LINES, true, {}, std::move(data));
             }
+        }
+        else if (op == "edit-meta" && !core_schematic.tool_is_active()) {
+            main_window->present(timestamp);
+            tool_begin(ToolID::EDIT_SCHEMATIC_PROPERTIES);
         }
     }
     return true;
@@ -233,8 +260,6 @@ int ImpSchematic::get_board_pid()
 
 void ImpSchematic::construct()
 {
-
-    main_window->set_title("Schematic - Interactive Manipulator");
     state_store = std::make_unique<WindowStateStore>(main_window, "imp-schematic");
 
     sheet_box = Gtk::manage(new SheetBox(&core_schematic));
@@ -286,23 +311,14 @@ void ImpSchematic::construct()
 
     canvas->set_highlight_mode(CanvasGL::HighlightMode::DIM);
 
-    {
-        auto button = Gtk::manage(new Gtk::Button("Place part"));
-        button->signal_clicked().connect([this] { trigger_action(ActionID::PLACE_PART); });
-        button->show();
-        core.r->signal_tool_changed().connect([button](ToolID t) { button->set_sensitive(t == ToolID::NONE); });
-        main_window->header->pack_end(*button);
-    }
-
     connect_action(ActionID::PLACE_PART, [this](const auto &conn) {
         if (!sockets_connected) {
             this->tool_begin(ToolID::ADD_PART);
         }
         else {
-            auto ev = gtk_get_current_event();
             json j;
             j["op"] = "show-browser";
-            j["time"] = gdk_event_get_time(ev);
+            j["time"] = gtk_get_current_event_time();
             allow_set_foreground_window(mgr_pid);
             this->send_json(j);
         }
@@ -310,10 +326,9 @@ void ImpSchematic::construct()
 
     if (sockets_connected) {
         connect_action(ActionID::TO_BOARD, [this](const auto &conn) {
-            auto ev = gtk_get_current_event();
             json j;
             j["op"] = "to-board";
-            j["time"] = gdk_event_get_time(ev);
+            j["time"] = gtk_get_current_event_time();
             j["selection"] = nullptr;
             for (const auto &it : canvas->get_selection()) {
                 auto sheet = core_schematic.get_sheet();
@@ -330,10 +345,6 @@ void ImpSchematic::construct()
             this->send_json(j);
         });
         set_action_sensitive(make_action(ActionID::TO_BOARD), false);
-        auto button = create_action_button(make_action(ActionID::TO_BOARD));
-        button->set_tooltip_text("Place selected components on board");
-        button->show();
-        main_window->header->pack_end(*button);
 
         connect_action(ActionID::SHOW_IN_BROWSER, [this](const auto &conn) {
             for (const auto &it : canvas->get_selection()) {
@@ -355,23 +366,22 @@ void ImpSchematic::construct()
 
         connect_action(ActionID::SAVE_RELOAD_NETLIST, [this](const auto &conn) {
             this->trigger_action(ActionID::SAVE);
-            auto ev = gtk_get_current_event();
             json j;
-            j["time"] = gdk_event_get_time(ev);
+            j["time"] = gtk_get_current_event_time();
             j["op"] = "reload-netlist";
             this->send_json(j);
         });
         set_action_sensitive(make_action(ActionID::SAVE_RELOAD_NETLIST), false);
 
         connect_action(ActionID::GO_TO_BOARD, [this](const auto &conn) {
-            auto ev = gtk_get_current_event();
             json j;
-            j["time"] = gdk_event_get_time(ev);
+            j["time"] = gtk_get_current_event_time();
             j["op"] = "present-board";
-            allow_set_foreground_window(this->get_board_pid());
+            auto board_pid = this->get_board_pid();
+            if (board_pid != -1)
+                allow_set_foreground_window(board_pid);
             this->send_json(j);
         });
-        set_action_sensitive(make_action(ActionID::GO_TO_BOARD), false);
 
         connect_action(ActionID::SHOW_IN_POOL_MANAGER, [this](const auto &conn) {
             for (const auto &it : canvas->get_selection()) {
@@ -437,7 +447,7 @@ void ImpSchematic::construct()
     connect_action(ActionID::HIGHLIGHT_TAG, sigc::mem_fun(*this, &ImpSchematic::handle_highlight_group_tag));
 
     bom_export_window = BOMExportWindow::create(main_window, core_schematic.get_block(),
-                                                core_schematic.get_bom_export_settings(), project_dir);
+                                                core_schematic.get_bom_export_settings(), *pool.get(), project_dir);
 
     connect_action(ActionID::BOM_EXPORT_WINDOW, [this](const auto &c) { bom_export_window->present(); });
     connect_action(ActionID::EXPORT_BOM, [this](const auto &c) {
@@ -446,14 +456,11 @@ void ImpSchematic::construct()
     });
 
     bom_export_window->signal_changed().connect([this] { core_schematic.set_needs_save(); });
-    core.r->signal_tool_changed().connect([this](ToolID t) { bom_export_window->set_can_export(t == ToolID::NONE); });
-    core.r->signal_rebuilt().connect([this] {
-        bom_export_window->update_preview();
-        bom_export_window->update_orderable_MPNs();
-    });
+    core->signal_tool_changed().connect([this](ToolID t) { bom_export_window->set_can_export(t == ToolID::NONE); });
+    core->signal_rebuilt().connect([this] { bom_export_window->update(); });
 
-    pdf_export_window = PDFExportWindow::create(main_window, &core_schematic, *core_schematic.get_pdf_export_settings(),
-                                                project_dir);
+    pdf_export_window = PDFExportWindow::create(main_window, dynamic_cast<IDocument *>(&core_schematic),
+                                                *core_schematic.get_pdf_export_settings(), project_dir);
     pdf_export_window->signal_changed().connect([this] { core_schematic.set_needs_save(); });
     connect_action(ActionID::PDF_EXPORT_WINDOW, [this](const auto &c) { pdf_export_window->present(); });
     connect_action(ActionID::EXPORT_PDF, [this](const auto &c) {
@@ -461,7 +468,20 @@ void ImpSchematic::construct()
         pdf_export_window->generate();
     });
 
+    unplaced_box = Gtk::manage(new UnplacedBox("Symbol"));
+    unplaced_box->show();
+    main_window->left_panel->pack_end(*unplaced_box, true, true, 0);
+    unplaced_box->signal_place().connect([this](const auto &items) {
+        auto d = std::make_unique<ToolMapSymbol::ToolDataMapSymbol>(items);
+        this->tool_begin(ToolID::MAP_SYMBOL, false, {}, std::move(d));
+    });
+    core_schematic.signal_rebuilt().connect(sigc::mem_fun(*this, &ImpSchematic::update_unplaced));
+    update_unplaced();
+    core_schematic.signal_tool_changed().connect(
+            [this](ToolID tool_id) { unplaced_box->set_sensitive(tool_id == ToolID::NONE); });
+
     grid_spin_button->set_sensitive(false);
+    canvas->snap_to_targets = false;
 
     rules_window->signal_goto().connect([this](Coordi location, UUID sheet) {
         auto sch = core_schematic.get_schematic();
@@ -482,7 +502,40 @@ void ImpSchematic::construct()
         target_drag_begin = Target();
         return false;
     });
-} // namespace horizon
+
+    main_window->signal_activate_hud_link().connect(
+            [this](const std::string &url) {
+                if (url.find("s:") == 0) {
+                    std::string sheet = url.substr(2);
+                    auto uuid = UUID(sheet);
+                    auto sch = core_schematic.get_schematic();
+                    if (sch->sheets.count(uuid)) {
+                        sheet_box->select_sheet(uuid);
+                    }
+                    return true;
+                }
+                return false;
+            },
+            false);
+
+    add_action_button(make_action(ActionID::PLACE_PART));
+    add_action_button(make_action(ToolID::DRAW_NET));
+    {
+        auto &b = add_action_button(make_action(ToolID::PLACE_NET_LABEL));
+        b.add_action(make_action(ToolID::PLACE_BUS_LABEL));
+        b.add_action(make_action(ToolID::PLACE_BUS_RIPPER));
+    }
+    add_action_button(make_action(ToolID::PLACE_POWER_SYMBOL));
+    {
+        auto &b = add_action_button(make_action(ToolID::DRAW_LINE));
+        b.add_action(make_action(ToolID::DRAW_LINE_RECTANGLE));
+        b.add_action(make_action(ToolID::DRAW_ARC));
+    }
+    add_action_button(make_action(ToolID::PLACE_TEXT));
+
+    if (!core_schematic.get_project_meta_loaded_from_block())
+        core_schematic.set_needs_save();
+}
 
 void ImpSchematic::update_action_sensitivity()
 {
@@ -492,7 +545,6 @@ void ImpSchematic::update_action_sensitivity()
         req["op"] = "has-board";
         bool has_board = send_json(req);
         set_action_sensitive(make_action(ActionID::SAVE_RELOAD_NETLIST), has_board);
-        set_action_sensitive(make_action(ActionID::GO_TO_BOARD), has_board);
         auto n_sym = std::count_if(sel.begin(), sel.end(),
                                    [](const auto &x) { return x.type == ObjectType::SCHEMATIC_SYMBOL; });
         set_action_sensitive(make_action(ActionID::SHOW_IN_BROWSER), n_sym == 1);
@@ -510,6 +562,7 @@ void ImpSchematic::update_action_sensitivity()
         set_action_sensitive(make_action(ActionID::SHOW_IN_POOL_MANAGER), false);
     }
     set_action_sensitive(make_action(ActionID::MOVE_TO_OTHER_SHEET), sel.size() > 0);
+    set_action_sensitive(make_action(ActionID::GO_TO_BOARD), sockets_connected);
 
     set_action_sensitive(make_action(ActionID::HIGHLIGHT_NET), std::any_of(sel.begin(), sel.end(), [](const auto &x) {
                              switch (x.type) {
@@ -544,10 +597,31 @@ std::string ImpSchematic::get_hud_text(std::set<SelectableRef> &sel)
 {
     std::string s;
     if (sel_count_type(sel, ObjectType::SCHEMATIC_SYMBOL) == 1) {
-        const auto &sym = core_schematic.get_sheet()->symbols.at(sel_find_one(sel, ObjectType::SCHEMATIC_SYMBOL));
+        const auto &sym = core_schematic.get_sheet()->symbols.at(sel_find_one(sel, ObjectType::SCHEMATIC_SYMBOL).uuid);
         s += "<b>Symbol " + sym.component->refdes + "</b>\n";
         s += get_hud_text_for_component(sym.component);
         sel_erase_type(sel, ObjectType::SCHEMATIC_SYMBOL);
+    }
+
+    if (sel_count_type(sel, ObjectType::TEXT) == 1) {
+        const auto text = core->get_text(sel_find_one(sel, ObjectType::TEXT).uuid);
+        const auto txt = Glib::ustring(text->text);
+        Glib::MatchInfo ma;
+        if (core_schematic.get_schematic()->get_sheetref_regex()->match(txt, ma)) {
+            s += "\n\n<b>Text with sheet references</b>\n";
+            do {
+                auto uuid = ma.fetch(1);
+                std::string url = "s:" + uuid;
+                if (core_schematic.get_schematic()->sheets.count(UUID(uuid))) {
+                    s += make_link_markup(url, core_schematic.get_schematic()->sheets.at(UUID(uuid)).name);
+                }
+                else {
+                    s += "Unknown Sheet";
+                }
+                s += "\n";
+            } while (ma.next());
+            sel_erase_type(sel, ObjectType::TEXT);
+        }
     }
     trim(s);
     return s;
@@ -648,7 +722,7 @@ void ImpSchematic::handle_drag()
             update_highlights();
             ToolArgs args;
             args.coords = target_drag_begin.p;
-            ToolResponse r = core.r->tool_begin(ToolID::DRAW_NET, args, imp_interface.get());
+            ToolResponse r = core->tool_begin(ToolID::DRAW_NET, args, imp_interface.get());
             tool_process(r);
         }
         {
@@ -658,14 +732,14 @@ void ImpSchematic::handle_drag()
             args.button = 1;
             args.target = target_drag_begin;
             args.work_layer = canvas->property_work_layer();
-            ToolResponse r = core.r->tool_update(args);
+            ToolResponse r = core->tool_update(args);
             tool_process(r);
         }
         target_drag_begin = Target();
     }
 }
 
-void ImpSchematic::search_center(const Core::SearchResult &res)
+void ImpSchematic::search_center(const Searcher::SearchResult &res)
 {
     if (res.sheet != core_schematic.get_sheet()->uuid) {
         sheet_box->select_sheet(res.sheet);
@@ -739,24 +813,24 @@ void ImpSchematic::handle_move_to_other_sheet(const ActionConnection &conn)
         for (const auto &it : selection) {
             switch (it.type) {
             case ObjectType::NET_LABEL: {
-                auto &la = core.c->get_sheet()->net_labels.at(it.uuid);
+                auto &la = core_schematic.get_sheet()->net_labels.at(it.uuid);
                 new_sel.emplace(la.junction->uuid, ObjectType::JUNCTION);
             } break;
             case ObjectType::BUS_LABEL: {
-                auto &la = core.c->get_sheet()->bus_labels.at(it.uuid);
+                auto &la = core_schematic.get_sheet()->bus_labels.at(it.uuid);
                 new_sel.emplace(la.junction->uuid, ObjectType::JUNCTION);
             } break;
             case ObjectType::POWER_SYMBOL: {
-                auto &ps = core.c->get_sheet()->power_symbols.at(it.uuid);
+                auto &ps = core_schematic.get_sheet()->power_symbols.at(it.uuid);
                 new_sel.emplace(ps.junction->uuid, ObjectType::JUNCTION);
             } break;
             case ObjectType::BUS_RIPPER: {
-                auto &rip = core.c->get_sheet()->bus_rippers.at(it.uuid);
+                auto &rip = core_schematic.get_sheet()->bus_rippers.at(it.uuid);
                 new_sel.emplace(rip.junction->uuid, ObjectType::JUNCTION);
             } break;
 
             case ObjectType::LINE_NET: {
-                auto line = &core.c->get_sheet()->net_lines.at(it.uuid);
+                auto line = &core_schematic.get_sheet()->net_lines.at(it.uuid);
                 for (auto &it_ft : {line->from, line->to}) {
                     if (it_ft.is_junc()) {
                         new_sel.emplace(it_ft.junc->uuid, ObjectType::JUNCTION);
@@ -770,8 +844,22 @@ void ImpSchematic::handle_move_to_other_sheet(const ActionConnection &conn)
                 }
             } break;
 
+            case ObjectType::LINE: {
+                auto line = &core_schematic.get_sheet()->lines.at(it.uuid);
+                for (auto &it_ft : {line->from, line->to}) {
+                    new_sel.emplace(it_ft->uuid, ObjectType::JUNCTION);
+                }
+            } break;
+
+            case ObjectType::ARC: {
+                auto arc = &core_schematic.get_sheet()->arcs.at(it.uuid);
+                for (auto &it_ft : {arc->from, arc->to, arc->center}) {
+                    new_sel.emplace(it_ft->uuid, ObjectType::JUNCTION);
+                }
+            } break;
+
             case ObjectType::SCHEMATIC_SYMBOL: {
-                auto sym = core.c->get_schematic_symbol(it.uuid);
+                auto sym = core_schematic.get_schematic_symbol(it.uuid);
                 for (const auto &itt : sym->texts) {
                     new_sel.emplace(itt->uuid, ObjectType::TEXT);
                 }
@@ -782,27 +870,27 @@ void ImpSchematic::handle_move_to_other_sheet(const ActionConnection &conn)
         }
 
         // other direction
-        for (const auto &it : core.c->get_sheet()->net_labels) {
+        for (const auto &it : core_schematic.get_sheet()->net_labels) {
             if (selection.count(SelectableRef(it.second.junction->uuid, ObjectType::JUNCTION))) {
                 new_sel.emplace(it.first, ObjectType::NET_LABEL);
             }
         }
-        for (const auto &it : core.c->get_sheet()->bus_labels) {
+        for (const auto &it : core_schematic.get_sheet()->bus_labels) {
             if (selection.count(SelectableRef(it.second.junction->uuid, ObjectType::JUNCTION))) {
                 new_sel.emplace(it.first, ObjectType::BUS_LABEL);
             }
         }
-        for (const auto &it : core.c->get_sheet()->bus_rippers) {
+        for (const auto &it : core_schematic.get_sheet()->bus_rippers) {
             if (selection.count(SelectableRef(it.second.junction->uuid, ObjectType::JUNCTION))) {
                 new_sel.emplace(it.first, ObjectType::BUS_RIPPER);
             }
         }
-        for (const auto &it : core.c->get_sheet()->power_symbols) {
+        for (const auto &it : core_schematic.get_sheet()->power_symbols) {
             if (selection.count(SelectableRef(it.second.junction->uuid, ObjectType::JUNCTION))) {
                 new_sel.emplace(it.first, ObjectType::POWER_SYMBOL);
             }
         }
-        for (const auto &it : core.c->get_sheet()->net_lines) {
+        for (const auto &it : core_schematic.get_sheet()->net_lines) {
             const auto line = it.second;
             bool add_line = false;
             for (auto &it_ft : {line.from, line.to}) {
@@ -826,6 +914,20 @@ void ImpSchematic::handle_move_to_other_sheet(const ActionConnection &conn)
                 new_sel.emplace(it.first, ObjectType::LINE_NET);
             }
         }
+        for (const auto &it : core_schematic.get_sheet()->lines) {
+            for (const auto &it_ft : {it.second.from, it.second.to}) {
+                if (selection.count(SelectableRef(it_ft->uuid, ObjectType::JUNCTION))) {
+                    new_sel.emplace(it.first, ObjectType::LINE);
+                }
+            }
+        }
+        for (const auto &it : core_schematic.get_sheet()->arcs) {
+            for (const auto &it_ft : {it.second.from, it.second.to, it.second.center}) {
+                if (selection.count(SelectableRef(it_ft->uuid, ObjectType::JUNCTION))) {
+                    new_sel.emplace(it.first, ObjectType::ARC);
+                }
+            }
+        }
 
         added = false;
         for (const auto &it : new_sel) {
@@ -836,19 +938,19 @@ void ImpSchematic::handle_move_to_other_sheet(const ActionConnection &conn)
     }
     canvas->set_selection(selection);
 
-    auto old_sheet = core.c->get_sheet();
+    auto old_sheet = core_schematic.get_sheet();
     Sheet *new_sheet = nullptr;
     {
-        SelectSheetDialog dia(core.c->get_schematic(), old_sheet);
+        SelectSheetDialog dia(core_schematic.get_schematic(), old_sheet);
         dia.set_transient_for(*main_window);
         if (dia.run() == Gtk::RESPONSE_OK) {
-            new_sheet = &core.c->get_schematic()->sheets.at(dia.selected_sheet);
+            new_sheet = &core_schematic.get_schematic()->sheets.at(dia.selected_sheet);
         }
     }
     if (!new_sheet)
         return;
     sheet_box->select_sheet(new_sheet->uuid);
-    assert(core.c->get_sheet() == new_sheet);
+    assert(core_schematic.get_sheet() == new_sheet);
 
     // actually move things to new sheet
     for (const auto &it : selection) {
@@ -885,20 +987,28 @@ void ImpSchematic::handle_move_to_other_sheet(const ActionConnection &conn)
             new_sheet->texts.insert(std::make_pair(it.uuid, std::move(old_sheet->texts.at(it.uuid))));
             old_sheet->texts.erase(it.uuid);
         } break;
+        case ObjectType::LINE: {
+            new_sheet->lines.insert(std::make_pair(it.uuid, std::move(old_sheet->lines.at(it.uuid))));
+            old_sheet->lines.erase(it.uuid);
+        } break;
+        case ObjectType::ARC: {
+            new_sheet->arcs.insert(std::make_pair(it.uuid, std::move(old_sheet->arcs.at(it.uuid))));
+            old_sheet->arcs.erase(it.uuid);
+        } break;
 
         default:;
         }
     }
-    core.c->get_schematic()->update_refs();
+    core_schematic.get_schematic()->update_refs();
 
-    core.c->commit();
-    core.c->rebuild();
+    core_schematic.set_needs_save();
+    core_schematic.rebuild();
     canvas_update();
     canvas->set_selection(selection);
     tool_begin(ToolID::MOVE);
 }
 
-std::pair<ActionID, ToolID> ImpSchematic::get_doubleclick_action(ObjectType type, const UUID &uu)
+ActionToolID ImpSchematic::get_doubleclick_action(ObjectType type, const UUID &uu)
 {
     auto a = ImpBase::get_doubleclick_action(type, uu);
     if (a.first != ActionID::NONE)
@@ -913,4 +1023,44 @@ std::pair<ActionID, ToolID> ImpSchematic::get_doubleclick_action(ObjectType type
     }
 }
 
+void ImpSchematic::update_unplaced()
+{
+    unplaced_box->update(core_schematic.get_schematic()->get_unplaced_gates());
+}
+
+void ImpSchematic::expand_selection_for_property_panel(std::set<SelectableRef> &sel_extra,
+                                                       const std::set<SelectableRef> &sel)
+{
+    for (const auto &it : sel) {
+        switch (it.type) {
+        case ObjectType::SCHEMATIC_SYMBOL:
+            sel_extra.emplace(core_schematic.get_schematic_symbol(it.uuid)->component->uuid, ObjectType::COMPONENT);
+            break;
+        case ObjectType::JUNCTION:
+            if (core->get_junction(it.uuid)->net) {
+                sel_extra.emplace(core->get_junction(it.uuid)->net->uuid, ObjectType::NET);
+            }
+            break;
+        case ObjectType::LINE_NET: {
+            LineNet &li = core_schematic.get_sheet()->net_lines.at(it.uuid);
+            if (li.net) {
+                sel_extra.emplace(li.net->uuid, ObjectType::NET);
+            }
+        } break;
+        case ObjectType::NET_LABEL: {
+            NetLabel &la = core_schematic.get_sheet()->net_labels.at(it.uuid);
+            if (la.junction->net) {
+                sel_extra.emplace(la.junction->net->uuid, ObjectType::NET);
+            }
+        } break;
+        case ObjectType::POWER_SYMBOL: {
+            PowerSymbol &sym = core_schematic.get_sheet()->power_symbols.at(it.uuid);
+            if (sym.net) {
+                sel_extra.emplace(sym.net->uuid, ObjectType::NET);
+            }
+        } break;
+        default:;
+        }
+    }
+}
 } // namespace horizon

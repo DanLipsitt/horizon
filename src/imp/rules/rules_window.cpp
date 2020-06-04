@@ -18,8 +18,7 @@
 #include "rules/rules.hpp"
 #include "rules/rules_with_core.hpp"
 #include "util/util.hpp"
-#include "core/core_board.hpp"
-#include "core/core_schematic.hpp"
+#include "core/core.hpp"
 
 #include <thread>
 
@@ -89,6 +88,7 @@ RulesWindow::RulesWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builde
     x->get_widget("apply_button", apply_button);
     x->get_widget("stack", stack);
     x->get_widget("stack_switcher", stack_switcher);
+    x->get_widget("rev_warn", rev_warn);
     sg_order = Gtk::SizeGroup::create(Gtk::SIZE_GROUP_HORIZONTAL);
 
     lb_rules->signal_row_selected().connect(
@@ -126,6 +126,7 @@ RulesWindow::RulesWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builde
             auto la = dynamic_cast<RuleLabel *>(row->get_child());
             rules->remove_rule(la->id, la->uuid);
             update_rule_instances(la->id);
+            update_warning();
             s_signal_changed.emit();
         }
     });
@@ -134,6 +135,7 @@ RulesWindow::RulesWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builde
         rules->add_rule(rule_current);
         update_rule_instances(rule_current);
         lb_multi->select_row(*lb_multi->get_row_at_index(0));
+        update_warning();
         s_signal_changed.emit();
     });
 
@@ -143,6 +145,7 @@ RulesWindow::RulesWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builde
             auto la = dynamic_cast<RuleLabel *>(row->get_child());
             rules->move_rule(la->id, la->uuid, -1);
             update_rule_instance_labels();
+            update_warning();
             s_signal_changed.emit();
         }
     });
@@ -152,6 +155,7 @@ RulesWindow::RulesWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builde
             auto la = dynamic_cast<RuleLabel *>(row->get_child());
             rules->move_rule(la->id, la->uuid, 1);
             update_rule_instance_labels();
+            update_warning();
             s_signal_changed.emit();
         }
     });
@@ -267,7 +271,8 @@ RulesWindow::RulesWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builde
                     for (const auto &path : it_err.error_polygons) {
                         ClipperLib::IntPoint last = path.back();
                         for (const auto &pt : path) {
-                            annotation->draw_line({last.X, last.Y}, {pt.X, pt.Y}, ColorP::FROM_LAYER, .01_mm);
+                            annotation->draw_line(Coordf(last.X, last.Y), Coordf(pt.X, pt.Y), ColorP::FROM_LAYER,
+                                                  .01_mm);
                             last = pt;
                         }
                     }
@@ -419,6 +424,7 @@ void RulesWindow::show_editor(RuleEditor *e)
     editor->signal_updated().connect([this] {
         update_rule_instance_labels();
         update_rules_enabled();
+        update_warning();
         s_signal_changed.emit();
     });
 }
@@ -550,11 +556,23 @@ void RulesWindow::set_enabled(bool enable)
     enabled = enable;
 }
 
+void RulesWindow::update_warning()
+{
+    auto sorted = rules->get_rules_sorted(rule_current);
+    if (sorted.size() == 0) {
+        rev_warn->set_reveal_child(true);
+    }
+    else {
+        const auto &last_rule = sorted.back();
+        rev_warn->set_reveal_child(!last_rule->enabled || !last_rule->is_match_all());
+    }
+}
+
 RulesWindow *RulesWindow::create(Gtk::Window *p, CanvasGL *ca, Rules *ru, Core *c)
 {
     RulesWindow *w;
     Glib::RefPtr<Gtk::Builder> x = Gtk::Builder::create();
-    x->add_from_resource("/net/carrotIndustries/horizon/imp/rules/rules_window.ui");
+    x->add_from_resource("/org/horizon-eda/horizon/imp/rules/rules_window.ui");
     x->get_widget_derived("window", w, ca, ru, c);
     w->set_transient_for(*p);
     return w;

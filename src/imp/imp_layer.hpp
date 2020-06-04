@@ -3,8 +3,15 @@
 
 namespace horizon {
 class ImpLayer : public ImpBase {
+    friend class ImpInterface;
+
 public:
     using ImpBase::ImpBase;
+
+    bool is_layered() const override
+    {
+        return true;
+    };
 
 protected:
     void construct_layer_box(bool pack = true);
@@ -12,6 +19,7 @@ protected:
     Glib::RefPtr<Glib::Binding> work_layer_binding;
     Glib::RefPtr<Glib::Binding> layer_opacity_binding;
     void apply_preferences() override;
+    void get_save_meta(json &j) override;
 
     CanvasPreferences *get_canvas_preferences() override
     {

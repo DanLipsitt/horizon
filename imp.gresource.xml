@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <gresources>
-  <gresource prefix="/net/carrotIndustries/horizon">
-    <file>window.ui</file>
+  <gresource prefix="/org/horizon-eda/horizon">
+    <file>imp/window.ui</file>
     <file>util/window_state_schema.sql</file>
     <file>imp/layer_display_default.json</file>
     <file>imp/keys_default.json</file>
@@ -16,10 +16,15 @@
     <file>pool-prj-mgr/pool-mgr/editors/entity_editor.ui</file>
     <file>pool-prj-mgr/pool-mgr/editors/part_editor.ui</file>
     <file>pool-prj-mgr/pool-mgr/part_wizard/part_wizard.ui</file>
+    <file>pool-prj-mgr/pool-mgr/kicad_symbol_import_wizard/kicad_symbol_import_wizard.ui</file>
     <file>pool-prj-mgr/pool-mgr/pool_merge.ui</file>
     <file>pool-prj-mgr/prj-mgr/part_browser/part_browser.ui</file>
     <file>pool-prj-mgr/prj-mgr/pool_cache_window.ui</file>
     <file>pool-prj-mgr/prj-mgr/prefs.ui</file>
+    <file>pool-prj-mgr/welcome.ui</file>
+    <file>pool-prj-mgr/output_window.ui</file>
+    <file>pool-prj-mgr/splash1_1080.png</file>
+    <file>util/stock_info_provider_partinfo_schema.sql</file>
 
     <file preprocess="xml-stripblanks">icons/scalable/actions/edit-schematic-symbolic.svg</file>
     <file preprocess="xml-stripblanks">icons/scalable/actions/edit-board-symbolic.svg</file>
@@ -33,6 +38,36 @@
     <file preprocess="xml-stripblanks">icons/scalable/actions/view-3d-back-symbolic.svg</file>
     <file preprocess="xml-stripblanks">icons/scalable/actions/view-3d-left-symbolic.svg</file>
     <file preprocess="xml-stripblanks">icons/scalable/actions/view-3d-right-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/x-git-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/hourglass-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/action-button-expander-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/action-place-refdes-and-value-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/action-place-text-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/action-draw-line-rectangle-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/action-draw-line-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/action-draw-line-circle-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/action-draw-arc-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/action-place-shape-rectangle-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/action-place-shape-circle-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/action-place-shape-obround-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/action-place-hole-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/action-place-hole-slot-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/action-resize-symbol-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/action-draw-polygon-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/action-draw-polygon-circle-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/action-draw-polygon-rectangle-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/action-draw-dimension-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/action-place-pad-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/action-generate-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/action-place-power-symbol-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/action-draw-net-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/action-place-net-label-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/action-place-bus-label-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/action-place-bus-ripper-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/action-place-part-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/action-place-via-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/action-route-track-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/action-route-diffpair-symbolic.svg</file>
     <file>icons/scalable/apps/horizon-eda.svg</file>
     <file>icons/16x16/apps/horizon-eda.png</file>
     <file>icons/32x32/apps/horizon-eda.png</file>
@@ -55,6 +90,10 @@
     <file>imp/pdf_export.ui</file>
     <file>imp/3d_view.ui</file>
     <file>imp/step_export.ui</file>
+    <file>imp/pnp_export.ui</file>
+    <file>imp/airwire_filter.ui</file>
+
+    <file>widgets/column_chooser.ui</file>
 
     <file>global.css</file>
 
@@ -77,6 +116,8 @@
     <file>canvas/shaders/triangle-line-butt-geometry.glsl</file>
     <file>canvas/shaders/triangle-line-fragment.glsl</file>
     <file>canvas/shaders/triangle-line-geometry.glsl</file>
+    <file>canvas/shaders/triangle-glyph-fragment.glsl</file>
+    <file>canvas/shaders/triangle-glyph-geometry.glsl</file>
     <file>canvas/shaders/ubo.glsl</file>
 
     <file>canvas/shaders/marker-vertex.glsl</file>
@@ -86,6 +127,9 @@
     <file>canvas/shaders/selection-line-vertex.glsl</file>
     <file>canvas/shaders/selection-line-fragment.glsl</file>
     <file>canvas/shaders/selection-line-geometry.glsl</file>
+
+    <file>canvas/shaders/picture-vertex.glsl</file>
+    <file>canvas/shaders/picture-fragment.glsl</file>
 
     <file>canvas3d/shaders/cover-vertex.glsl</file>
     <file>canvas3d/shaders/cover-fragment.glsl</file>

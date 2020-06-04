@@ -2,6 +2,7 @@
 #include "canvas_gl.hpp"
 #include "gl_util.hpp"
 #include <glm/gtc/type_ptr.hpp>
+#include "bitmap_font_util.hpp"
 
 namespace horizon {
 
@@ -72,35 +73,46 @@ static GLuint create_vao(GLuint program, GLuint &vbo_out, GLuint &ebo_out)
     return vao;
 }
 
-TriangleRenderer::TriangleRenderer(CanvasGL *c, std::unordered_map<int, std::vector<Triangle>> &tris)
-    : ca(c), triangles(tris)
+TriangleRenderer::TriangleRenderer(CanvasGL *c, std::map<int, std::vector<Triangle>> &tris) : ca(c), triangles(tris)
 {
 }
 
+
 void TriangleRenderer::realize()
 {
-    program_triangle =
-            gl_create_program_from_resource("/net/carrotIndustries/horizon/canvas/shaders/triangle-vertex.glsl",
-                                            "/net/carrotIndustries/horizon/canvas/shaders/"
-                                            "triangle-triangle-fragment.glsl",
-                                            "/net/carrotIndustries/horizon/canvas/shaders/"
-                                            "triangle-triangle-geometry.glsl");
-    program_line0 = gl_create_program_from_resource("/net/carrotIndustries/horizon/canvas/shaders/triangle-vertex.glsl",
-                                                    "/net/carrotIndustries/horizon/canvas/shaders/"
+
+    glGenTextures(1, &texture_glyph);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, texture_glyph);
+    bitmap_font::load_texture();
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    program_triangle = gl_create_program_from_resource("/org/horizon-eda/horizon/canvas/shaders/triangle-vertex.glsl",
+                                                       "/org/horizon-eda/horizon/canvas/shaders/"
+                                                       "triangle-triangle-fragment.glsl",
+                                                       "/org/horizon-eda/horizon/canvas/shaders/"
+                                                       "triangle-triangle-geometry.glsl");
+    program_line0 = gl_create_program_from_resource("/org/horizon-eda/horizon/canvas/shaders/triangle-vertex.glsl",
+                                                    "/org/horizon-eda/horizon/canvas/shaders/"
                                                     "triangle-line0-fragment.glsl",
-                                                    "/net/carrotIndustries/horizon/canvas/shaders/"
+                                                    "/org/horizon-eda/horizon/canvas/shaders/"
                                                     "triangle-line0-geometry.glsl");
-    program_line_butt =
-            gl_create_program_from_resource("/net/carrotIndustries/horizon/canvas/shaders/triangle-vertex.glsl",
-                                            "/net/carrotIndustries/horizon/canvas/shaders/"
-                                            "triangle-line-butt-fragment.glsl",
-                                            "/net/carrotIndustries/horizon/canvas/shaders/"
-                                            "triangle-line-butt-geometry.glsl");
-    program_line = gl_create_program_from_resource("/net/carrotIndustries/horizon/canvas/shaders/triangle-vertex.glsl",
-                                                   "/net/carrotIndustries/horizon/canvas/shaders/"
+    program_line_butt = gl_create_program_from_resource("/org/horizon-eda/horizon/canvas/shaders/triangle-vertex.glsl",
+                                                        "/org/horizon-eda/horizon/canvas/shaders/"
+                                                        "triangle-line-butt-fragment.glsl",
+                                                        "/org/horizon-eda/horizon/canvas/shaders/"
+                                                        "triangle-line-butt-geometry.glsl");
+    program_line = gl_create_program_from_resource("/org/horizon-eda/horizon/canvas/shaders/triangle-vertex.glsl",
+                                                   "/org/horizon-eda/horizon/canvas/shaders/"
                                                    "triangle-line-fragment.glsl",
-                                                   "/net/carrotIndustries/horizon/canvas/shaders/"
+                                                   "/org/horizon-eda/horizon/canvas/shaders/"
                                                    "triangle-line-geometry.glsl");
+    program_glyph = gl_create_program_from_resource("/org/horizon-eda/horizon/canvas/shaders/triangle-vertex.glsl",
+                                                    "/org/horizon-eda/horizon/canvas/shaders/"
+                                                    "triangle-glyph-fragment.glsl",
+                                                    "/org/horizon-eda/horizon/canvas/shaders/"
+                                                    "triangle-glyph-geometry.glsl");
     GL_CHECK_ERROR;
     glGenBuffers(1, &ubo);
     glBindBuffer(GL_UNIFORM_BUFFER, ubo);
@@ -115,6 +127,7 @@ void TriangleRenderer::realize()
     glUniformBlockBinding(program_line0, block_index, binding_point_index);
     glUniformBlockBinding(program_line_butt, block_index, binding_point_index);
     glUniformBlockBinding(program_line, block_index, binding_point_index);
+    glUniformBlockBinding(program_glyph, block_index, binding_point_index);
     GL_CHECK_ERROR;
     vao = create_vao(program_line, vbo, ebo);
     GL_CHECK_ERROR;
@@ -123,12 +136,13 @@ void TriangleRenderer::realize()
 
 class UBOBuffer {
 public:
-    std::array<std::array<float, 4>, 17> colors; // 17==ColorP::N_COLORS, keep in sync with shaders
+    std::array<std::array<float, 4>, 18> colors; // 18==ColorP::N_COLORS, keep in sync with shaders
     std::array<float, 12> screenmat;
     std::array<float, 12> viewmat;
     std::array<float, 3> layer_color;
     float alpha;
     float scale;
+    float min_line_width;
     unsigned int types_visible;
     unsigned int types_force_outline;
     int layer_flags;
@@ -146,7 +160,7 @@ static void mat3_to_array(std::array<float, 12> &dest, const glm::mat3 &src)
     }
 }
 
-void TriangleRenderer::render_layer(int layer, HighlightMode highlight_mode)
+void TriangleRenderer::render_layer(int layer, HighlightMode highlight_mode, bool ignore_flip)
 {
     const auto &ld = ca->get_layer_display(layer);
 
@@ -156,7 +170,10 @@ void TriangleRenderer::render_layer(int layer, HighlightMode highlight_mode)
     buf.colors = ca->palette_colors;
     buf.alpha = ca->property_layer_opacity() / 100;
     mat3_to_array(buf.screenmat, ca->screenmat);
-    mat3_to_array(buf.viewmat, ca->viewmat);
+    if (ignore_flip)
+        mat3_to_array(buf.viewmat, ca->viewmat_noflip);
+    else
+        mat3_to_array(buf.viewmat, ca->viewmat);
     auto lc = ca->get_layer_color(layer);
     buf.layer_color[0] = lc.r;
     buf.layer_color[1] = lc.g;
@@ -165,7 +182,13 @@ void TriangleRenderer::render_layer(int layer, HighlightMode highlight_mode)
     buf.types_visible = ld.types_visible;
     buf.types_force_outline = ld.types_force_outline;
     buf.scale = ca->scale;
-    buf.highlight_mode = ca->highlight_enabled ? static_cast<int>(ca->highlight_mode) : 0;
+    buf.min_line_width = ca->appearance.min_line_width;
+
+    if (layer >= 20000 && layer < 30000) // annotation layer, but not overlay
+        buf.highlight_mode = 0;
+    else
+        buf.highlight_mode = ca->highlight_enabled ? static_cast<int>(ca->highlight_mode) : 0;
+
     buf.highlight_dim = ca->appearance.highlight_dim;
     buf.highlight_lighten = ca->appearance.highlight_lighten;
 
@@ -201,6 +224,7 @@ void TriangleRenderer::render_layer(int layer, HighlightMode highlight_mode)
             break;
 
         case Type::GLYPH:
+            glUseProgram(program_glyph);
             break;
         }
         switch (highlight_mode) {
@@ -229,8 +253,10 @@ void TriangleRenderer::render_layer(int layer, HighlightMode highlight_mode)
 void TriangleRenderer::render_layer_with_overlay(int layer, HighlightMode highlight_mode)
 {
     render_layer(layer, highlight_mode);
-    if (ca->overlay_layers.count(layer))
-        render_layer(ca->overlay_layers.at(layer), highlight_mode);
+    for (auto ignore_flip : {false, true}) {
+        if (ca->overlay_layers.count({layer, ignore_flip}))
+            render_layer(ca->overlay_layers.at({layer, ignore_flip}), highlight_mode, ignore_flip);
+    }
 }
 
 
@@ -238,6 +264,7 @@ void TriangleRenderer::render()
 {
     glBindVertexArray(vao);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+    glActiveTexture(GL_TEXTURE0);
 
     GL_CHECK_ERROR
 
@@ -262,21 +289,24 @@ void TriangleRenderer::render()
 
     const auto &modes = ca->highlight_on_top ? modes_on_top : modes_normal;
 
+    render_annotations(false);
     for (auto highlight_mode : modes) {
         for (auto layer : layers) {
             const auto &ld = ca->get_layer_display(layer);
-            if (layer != ca->work_layer && layer < 10000 && ld.visible) {
+            if (layer != ca->work_layer && layer < 10000 && ld.visible && !ca->layer_is_annotation(layer)) {
                 render_layer_with_overlay(layer, highlight_mode);
             }
         }
         render_layer_with_overlay(ca->work_layer, highlight_mode);
         for (auto layer : layers) {
             const auto &ld = ca->get_layer_display(layer);
-            if (layer >= 10000 && layer < 30000 && ld.visible) {
+            if (layer >= 10000 && layer < Canvas::first_overlay_layer && ld.visible
+                && !ca->layer_is_annotation(layer)) {
                 render_layer(layer, highlight_mode);
             }
         }
     }
+    render_annotations(true);
     glDisable(GL_STENCIL_TEST);
 
     GL_CHECK_ERROR
@@ -286,6 +316,14 @@ void TriangleRenderer::render()
     GL_CHECK_ERROR
 }
 
+void TriangleRenderer::render_annotations(bool top)
+{
+    for (const auto &it : ca->annotations) {
+        if (ca->get_layer_display(it.first).visible && it.second.on_top == top) {
+            render_layer(it.first);
+        }
+    }
+}
 
 void TriangleRenderer::push()
 {
@@ -307,7 +345,10 @@ void TriangleRenderer::push()
         unsigned int i = 0;
         for (const auto &tri : tris) {
             auto ty = Type::LINE;
-            if (!isnan(tri.y2)) {
+            if (tri.flags & Triangle::FLAG_GLYPH) {
+                ty = Type::GLYPH;
+            }
+            else if (!isnan(tri.y2)) {
                 ty = Type::TRIANGLE;
             }
             else if (isnan(tri.y2) && tri.x2 == 0) {
@@ -322,7 +363,9 @@ void TriangleRenderer::push()
             else {
                 throw std::runtime_error("unknown triangle type");
             }
-            type_indices[std::make_pair(ty, tri.flags & Triangle::FLAG_HIGHLIGHT)].push_back(i + ofs);
+            type_indices[std::make_pair(ty, (tri.flags & Triangle::FLAG_HIGHLIGHT)
+                                                    || (tri.type == static_cast<int>(Triangle::Type::TRACK_PREVIEW)))]
+                    .push_back(i + ofs);
             i++;
         }
         for (const auto &it2 : type_indices) {

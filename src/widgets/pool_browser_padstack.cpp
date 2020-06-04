@@ -8,7 +8,6 @@ PoolBrowserPadstack::PoolBrowserPadstack(Pool *p) : PoolBrowser(p)
     construct();
     name_entry = create_search_entry("Name");
     install_pool_item_source_tooltip();
-    search();
 }
 
 Glib::RefPtr<Gtk::ListStore> PoolBrowserPadstack::create_list_store()
@@ -22,6 +21,7 @@ void PoolBrowserPadstack::create_columns()
     treeview->append_column("Type", list_columns.padstack_type);
     treeview->append_column("Package", list_columns.package_name);
     path_column = append_column("Path", list_columns.path, Pango::ELLIPSIZE_START);
+    install_column_tooltip(*path_column, list_columns.path);
 }
 
 void PoolBrowserPadstack::add_sort_controller_columns()
@@ -48,9 +48,7 @@ void PoolBrowserPadstack::set_include_padstack_type(Padstack::Type ty, bool v)
 
 void PoolBrowserPadstack::search()
 {
-    auto selected_uuid = get_selected();
-    treeview->unset_model();
-    store->clear();
+    prepare_search();
 
     std::string name_search = name_entry->get_text();
 
@@ -102,19 +100,28 @@ void PoolBrowserPadstack::search()
         row[list_columns.uuid] = UUID();
         row[list_columns.padstack_name] = "none";
     }
-
-    while (q.step()) {
-        row = *(store->append());
-        row[list_columns.uuid] = q.get<std::string>(0);
-        row[list_columns.padstack_name] = q.get<std::string>(1);
-        row[list_columns.padstack_type] = q.get<std::string>(2);
-        row[list_columns.package_name] = q.get<std::string>(3);
-        row[list_columns.path] = q.get<std::string>(4);
-        row[list_columns.source] = pool_item_source_from_db(q.get<std::string>(5), q.get<int>(6));
+    try {
+        while (q.step()) {
+            row = *(store->append());
+            row[list_columns.uuid] = q.get<std::string>(0);
+            row[list_columns.padstack_name] = q.get<std::string>(1);
+            row[list_columns.padstack_type] = q.get<std::string>(2);
+            row[list_columns.package_name] = q.get<std::string>(3);
+            row[list_columns.path] = q.get<std::string>(4);
+            row[list_columns.source] = pool_item_source_from_db(q.get<std::string>(5), q.get<int>(6));
+        }
+        set_busy(false);
     }
-    treeview->set_model(store);
-    select_uuid(selected_uuid);
-    scroll_to_selection();
+    catch (SQLite::Error &e) {
+        if (e.rc == SQLITE_BUSY) {
+            set_busy(true);
+        }
+        else {
+            throw;
+        }
+    }
+
+    finish_search();
 }
 
 UUID PoolBrowserPadstack::uuid_from_row(const Gtk::TreeModel::Row &row)

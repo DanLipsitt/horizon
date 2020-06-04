@@ -2,7 +2,8 @@
 #include "board/rule_clearance_copper.hpp"
 #include "common/lut.hpp"
 #include "common/patch_type_names.hpp"
-#include "core/core.hpp"
+#include "document/idocument.hpp"
+#include "common/layer_provider.hpp"
 #include "dialogs/dialogs.hpp"
 #include "rule_match_editor.hpp"
 #include "widgets/spin_button_dim.hpp"
@@ -18,7 +19,7 @@ void RuleEditorClearanceCopper::populate()
     rule2 = dynamic_cast<RuleClearanceCopper *>(rule);
 
     builder = Gtk::Builder::create_from_resource(
-            "/net/carrotIndustries/horizon/imp/rules/"
+            "/org/horizon-eda/horizon/imp/rules/"
             "rule_editor_clearance_copper.ui");
     Gtk::Box *editor;
     builder->get_widget("editor", editor);

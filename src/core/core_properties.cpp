@@ -3,6 +3,7 @@
 #include "common/hole.hpp"
 #include "common/layer_provider.hpp"
 #include "common/polygon.hpp"
+#include "common/picture.hpp"
 #include "core.hpp"
 #include "util/util.hpp"
 
@@ -196,6 +197,32 @@ bool Core::get_property(ObjectType type, const UUID &uu, ObjectProperty::ID prop
         }
     } break;
 
+    case ObjectType::PICTURE: {
+        auto pic = get_picture(uu);
+        switch (property) {
+        case ObjectProperty::ID::SIZE:
+            dynamic_cast<PropertyValueInt &>(value).value = pic->px_size;
+            return true;
+
+        case ObjectProperty::ID::ON_TOP:
+            dynamic_cast<PropertyValueBool &>(value).value = pic->on_top;
+            return true;
+
+        case ObjectProperty::ID::OPACITY:
+            dynamic_cast<PropertyValueDouble &>(value).value = pic->opacity;
+            return true;
+
+        case ObjectProperty::ID::POSITION_X:
+        case ObjectProperty::ID::POSITION_Y:
+        case ObjectProperty::ID::ANGLE:
+            get_placement(pic->placement, value, property);
+            return true;
+
+        default:
+            return false;
+        }
+    } break;
+
     default:
         return false;
     }
@@ -359,6 +386,32 @@ bool Core::set_property(ObjectType type, const UUID &uu, ObjectProperty::ID prop
         }
     } break;
 
+    case ObjectType::PICTURE: {
+        auto pic = get_picture(uu);
+        switch (property) {
+        case ObjectProperty::ID::SIZE:
+            pic->px_size = dynamic_cast<const PropertyValueInt &>(value).value;
+            break;
+
+        case ObjectProperty::ID::ON_TOP:
+            pic->on_top = dynamic_cast<const PropertyValueBool &>(value).value;
+            break;
+
+        case ObjectProperty::ID::OPACITY:
+            pic->opacity = dynamic_cast<const PropertyValueDouble &>(value).value;
+            break;
+
+        case ObjectProperty::ID::POSITION_X:
+        case ObjectProperty::ID::POSITION_Y:
+        case ObjectProperty::ID::ANGLE:
+            set_placement(pic->placement, value, property);
+            break;
+
+        default:
+            return false;
+        }
+    } break;
+
     default:
         return false;
     }
@@ -376,7 +429,7 @@ bool Core::get_property_meta(ObjectType type, const UUID &uu, ObjectProperty::ID
     case ObjectType::HOLE:
         switch (property) {
         case ObjectProperty::ID::LENGTH:
-            meta.is_settable = get_hole(uu, false)->shape == Hole::Shape::SLOT;
+            meta.is_settable = get_hole(uu)->shape == Hole::Shape::SLOT;
             return true;
         default:
             return false;
@@ -471,38 +524,5 @@ void Core::set_placement(Placement &placement, const class PropertyValue &value,
     }
 }
 
-std::string Core::get_display_name(ObjectType type, const UUID &uu, const UUID &sheet)
-{
-    return get_display_name(type, uu);
-}
 
-std::string Core::get_display_name(ObjectType type, const UUID &uu)
-{
-    switch (type) {
-    case ObjectType::HOLE:
-        return get_hole(uu)->shape == Hole::Shape::ROUND ? "Round" : "Slot";
-
-    case ObjectType::TEXT:
-        return get_text(uu)->text;
-
-    case ObjectType::DIMENSION: {
-        auto dim = get_dimension(uu);
-        auto s = dim_to_string(dim->get_length(), false);
-        switch (dim->mode) {
-        case Dimension::Mode::DISTANCE:
-            return s + " D";
-
-        case Dimension::Mode::HORIZONTAL:
-            return s + " H";
-
-        case Dimension::Mode::VERTICAL:
-            return s + " V";
-        }
-        return "";
-    }
-
-    default:
-        return "";
-    }
-}
 } // namespace horizon
